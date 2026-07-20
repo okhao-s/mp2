@@ -95,7 +95,7 @@ class AutoSignInEnhanced(_PluginBase):
     # 插件图标
     plugin_icon = "signin.png"
     # 插件版本
-    plugin_version = "2.8.1-Enhanced-v0.2"
+    plugin_version = "2.9.1-Enhanced-v0.3"
     # 插件作者
     plugin_author = "thsrite,cancelpt"
     # 作者主页
@@ -610,22 +610,11 @@ class AutoSignInEnhanced(_PluginBase):
             "login": []  # 登录数据
         }
         sign_dates = set()
-        sites_info = {}  # 记录站点信息
-
-        # 获取站点信息
-        site_indexers = SitesHelper().get_indexers()
-        for site in site_indexers:
-            if not site.get("public"):
-                sites_info[site.get("id")] = site.get("name")
-
-        # 自定义站点
-        custom_sites = self.__custom_sites()
-        for site in custom_sites:
-            sites_info[site.get("id")] = site.get("name")
+        sites_info = self._build_sites_info()
 
         # 获取常规日期格式数据
         for day in date_list:
-            day_str = f"{day.month}月{day.day}日"
+            day_str = self._date_label(day)
             day_formatted = day.strftime('%Y-%m-%d')
 
             # 获取"月日"格式数据
@@ -654,8 +643,7 @@ class AutoSignInEnhanced(_PluginBase):
 
                     # 为所有已完成签到的站点创建记录
                     for site_id in done_sites:
-                        site_id_str = str(site_id)
-                        site_name = sites_info.get(site_id_str) or sites_info.get(site_id) or f"站点ID: {site_id}"
+                        site_name = self._get_site_display_name(site_id, sites_info)
 
                         # 跳过需要重试的站点
                         if site_id in retry_sites:
@@ -691,8 +679,7 @@ class AutoSignInEnhanced(_PluginBase):
 
                     # 为所有已完成登录的站点创建记录
                     for site_id in done_sites:
-                        site_id_str = str(site_id)
-                        site_name = sites_info.get(site_id_str) or sites_info.get(site_id) or f"站点ID: {site_id}"
+                        site_name = self._get_site_display_name(site_id, sites_info)
 
                         # 跳过需要重试的站点
                         if site_id in retry_sites:
@@ -788,9 +775,126 @@ class AutoSignInEnhanced(_PluginBase):
                 login_site_data[site_name] = []
             login_site_data[site_name].append(record)
 
+        today_label = self._date_label(date_list[0])
+        signin_stats = self._calculate_day_stats(signin_site_data, today_label)
+        login_stats = self._calculate_day_stats(login_site_data, today_label)
+        signin_issue_count = signin_stats["error"] + signin_stats["warning"]
+        login_issue_count = login_stats["error"] + login_stats["warning"]
+        issue_count = signin_issue_count + login_issue_count
+        failure_count = signin_stats["error"] + login_stats["error"]
+        retry_count = signin_stats["warning"] + login_stats["warning"]
+
+        signin_color = "success"
+        if signin_stats["error"]:
+            signin_color = "error"
+        elif signin_issue_count or signin_stats["none"]:
+            signin_color = "warning"
+
+        login_color = "success"
+        if login_stats["error"]:
+            login_color = "error"
+        elif login_issue_count or login_stats["none"]:
+            login_color = "warning"
+
+        summary_items = [
+            {
+                "label": "今日签到",
+                "value": f"{signin_stats['success']}/{signin_stats['total']}",
+                "meta": f"异常 {signin_issue_count} · 未记录 {signin_stats['none']}",
+                "color": signin_color,
+                "icon": "mdi-calendar-check",
+            },
+            {
+                "label": "异常重试",
+                "value": str(issue_count),
+                "meta": f"失败 {failure_count} · 重试 {retry_count}",
+                "color": "error" if failure_count else "warning" if retry_count else "success",
+                "icon": "mdi-alert-circle-outline",
+            },
+            {
+                "label": "今日登录",
+                "value": f"{login_stats['success']}/{login_stats['total']}",
+                "meta": f"异常 {login_issue_count} · 未记录 {login_stats['none']}",
+                "color": login_color,
+                "icon": "mdi-login-variant",
+            },
+            {
+                "label": "历史范围",
+                "value": f"{len(sign_dates_list)} 天",
+                "meta": f"显示 {len(sign_dates_list)} 天数据",
+                "color": "info",
+                "icon": "mdi-history",
+            },
+        ]
+        summary_cards = []
+        for item in summary_items:
+            summary_cards.append({
+                'component': 'VCol',
+                'props': {
+                    'cols': 6,
+                    'sm': 3,
+                },
+                'content': [
+                    {
+                        'component': 'VCard',
+                        'props': {
+                            'variant': 'tonal',
+                            'color': item['color'],
+                            'class': 'summary-card',
+                        },
+                        'content': [
+                            {
+                                'component': 'VCardText',
+                                'props': {
+                                    'class': 'pa-3',
+                                },
+                                'content': [
+                                    {
+                                        'component': 'div',
+                                        'props': {
+                                            'class': 'summary-card__label',
+                                        },
+                                        'content': [
+                                            {
+                                                'component': 'VIcon',
+                                                'props': {
+                                                    'icon': item['icon'],
+                                                    'size': 'x-small',
+                                                    'class': 'mr-1',
+                                                },
+                                            },
+                                            {
+                                                'component': 'span',
+                                                'text': item['label'],
+                                            },
+                                        ],
+                                    },
+                                    {
+                                        'component': 'div',
+                                        'props': {
+                                            'class': 'summary-card__value',
+                                        },
+                                        'text': item['value'],
+                                    },
+                                    {
+                                        'component': 'div',
+                                        'props': {
+                                            'class': 'summary-card__meta',
+                                        },
+                                        'text': item['meta'],
+                                    },
+                                ],
+                            },
+                        ],
+                    },
+                ],
+            })
+
         # 创建签到折叠面板
         signin_panels = []
-        for site_name, records in signin_site_data.items():
+        for site_name, records in sorted(
+                signin_site_data.items(),
+                key=lambda item: self._site_sort_key(item[0], item[1], date_list)):
             # 按日期排序，最新的在前面
             try:
                 records.sort(key=lambda x: x.get("day_obj", datetime.now().date()), reverse=True)
@@ -798,66 +902,44 @@ class AutoSignInEnhanced(_PluginBase):
                 logger.debug(f"排序失败: {str(e)}")
 
             # 获取最新的状态作为站点概要
-            latest_status = records[0].get("message") or records[0].get("status", "未知状态")
-
-            # 确定状态颜色和图标
-            status_color = "teal-lighten-3"
-            status_icon = "mdi-emoticon-happy-outline"
-
-            if "失败" in latest_status or "错误" in latest_status:
-                status_color = "deep-orange-lighten-3"
-                status_icon = "mdi-emoticon-sad-outline"
-            elif "Cookie已失效" in latest_status:
-                status_color = "pink-lighten-3"
-                status_icon = "mdi-cookie-off"
-            elif "重试" in latest_status:
-                status_color = "amber-lighten-3"
-                status_icon = "mdi-emoticon-confused-outline"
-            elif "已签到" in latest_status:
-                status_color = "light-blue-lighten-3"
-                status_icon = "mdi-emoticon-cool-outline"
-            elif "成功" in latest_status:
-                status_color = "teal-lighten-3"
-                status_icon = "mdi-emoticon-happy-outline"
+            latest_record = self._latest_record(records)
+            latest_status = latest_record.get("message") or latest_record.get("status", "未知状态")
+            status_meta = self._status_meta(latest_record.get("status") or latest_status)
 
             # 创建每个站点的折叠面板
             signin_panels.append(
-                self._create_expansion_panel(site_name, records, status_color, status_icon, latest_status))
+                self._create_expansion_panel(
+                    site_name,
+                    records,
+                    status_meta["panel_color"],
+                    status_meta["icon"],
+                    latest_status,
+                ))
 
         # 创建登录折叠面板
         login_panels = []
-        for site_name, records in login_site_data.items():
+        for site_name, records in sorted(
+                login_site_data.items(),
+                key=lambda item: self._site_sort_key(item[0], item[1], date_list)):
             # 按日期排序，最新的在前面
             try:
                 records.sort(key=lambda x: x.get("day_obj", datetime.now().date()), reverse=True)
             except Exception as e:
                 logger.debug(f"排序失败: {str(e)}")
 
-
-            # 确定状态颜色和图标
-            status_color = "teal-lighten-3"
-            status_icon = "mdi-emoticon-happy-outline"
-            latest_status = records[0].get("status", "未知状态")
-
-            if "失败" in latest_status or "错误" in latest_status:
-                status_color = "deep-orange-lighten-3"
-                status_icon = "mdi-emoticon-sad-outline"
-            elif "Cookie已失效" in latest_status:
-                status_color = "pink-lighten-3"
-                status_icon = "mdi-cookie-off"
-            elif "重试" in latest_status:
-                status_color = "amber-lighten-3"
-                status_icon = "mdi-emoticon-confused-outline"
-            elif "已签到" in latest_status:
-                status_color = "light-blue-lighten-3"
-                status_icon = "mdi-emoticon-cool-outline"
-            elif "成功" in latest_status:
-                status_color = "teal-lighten-3"
-                status_icon = "mdi-emoticon-happy-outline"
+            latest_record = self._latest_record(records)
+            latest_status = latest_record.get("message") or latest_record.get("status", "未知状态")
+            status_meta = self._status_meta(latest_record.get("status") or latest_status)
 
             # 创建每个站点的折叠面板
             login_panels.append(
-                self._create_expansion_panel(site_name, records, status_color, status_icon, latest_status))
+                self._create_expansion_panel(
+                    site_name,
+                    records,
+                    status_meta["panel_color"],
+                    status_meta["icon"],
+                    latest_status,
+                ))
 
         # 添加样式
         return [
@@ -971,6 +1053,29 @@ class AutoSignInEnhanced(_PluginBase):
                     -webkit-background-clip: text;
                     -webkit-text-fill-color: transparent;
                 }
+                .summary-card {
+                    min-height: 108px;
+                }
+                .summary-card__label {
+                    display: flex;
+                    align-items: center;
+                    font-size: 0.75rem;
+                    font-weight: 600;
+                }
+                .summary-card__value {
+                    margin-top: 8px;
+                    font-size: 1.25rem;
+                    font-weight: 700;
+                    line-height: 1;
+                }
+                .summary-card__meta {
+                    margin-top: 6px;
+                    font-size: 0.72rem;
+                    opacity: 0.8;
+                    white-space: nowrap;
+                    overflow: hidden;
+                    text-overflow: ellipsis;
+                }
                 """
             },
             {
@@ -1027,6 +1132,13 @@ class AutoSignInEnhanced(_PluginBase):
                         ]
                     }
                 ]
+            },
+            {
+                'component': 'VRow',
+                'props': {
+                    'class': 'mb-1',
+                },
+                'content': summary_cards,
             },
             {
                 'component': 'VRow',
@@ -1202,7 +1314,174 @@ class AutoSignInEnhanced(_PluginBase):
         ]
 
     @staticmethod
-    def _create_expansion_panel(site_name, records, status_color, status_icon, latest_status):
+    def _add_site_info(sites_info: dict, site_id: Any, site_name: Any) -> None:
+        """Store both native and string site IDs for historical lookups."""
+        if site_id is None or not site_name:
+            return
+        site_name = str(site_name).strip()
+        if not site_name:
+            return
+        sites_info[site_id] = site_name
+        sites_info[str(site_id)] = site_name
+
+    def _build_sites_info(self) -> dict:
+        """Collect all site names that can appear in stored sign-in history."""
+        sites_info = {}
+        for site in SitesHelper().get_indexers():
+            if not site.get("public"):
+                self._add_site_info(
+                    sites_info,
+                    site.get("id"),
+                    site.get("name"),
+                )
+        for site in SiteOper().list_order_by_pri():
+            if isinstance(site, dict):
+                site_id = site.get("id")
+                site_name = site.get("name")
+            else:
+                site_id = getattr(site, "id", None)
+                site_name = getattr(site, "name", None)
+            self._add_site_info(sites_info, site_id, site_name)
+        for site in self.__custom_sites():
+            if isinstance(site, dict):
+                site_id = site.get("id")
+                site_name = site.get("name")
+            else:
+                site_id = getattr(site, "id", None)
+                site_name = getattr(site, "name", None)
+            self._add_site_info(sites_info, site_id, site_name)
+        return sites_info
+
+    @staticmethod
+    def _get_site_display_name(site_id: Any, sites_info: dict) -> str:
+        """Resolve a historical site ID while retaining the enhanced fallback."""
+        return sites_info.get(str(site_id)) or sites_info.get(site_id) or f"站点ID: {site_id}"
+
+    @staticmethod
+    def _status_meta(status_text: str) -> dict:
+        """Map a status message to a shared display level, icon, and ordering weight."""
+        status_text = str(status_text or "").strip()
+        if "Cookie已失效" in status_text or "失效" in status_text:
+            return {
+                "level": "error",
+                "color": "error",
+                "panel_color": "pink-lighten-3",
+                "icon": "mdi-cookie-off",
+                "sort": 0,
+            }
+        if "失败" in status_text or "错误" in status_text:
+            return {
+                "level": "error",
+                "color": "error",
+                "panel_color": "deep-orange-lighten-3",
+                "icon": "mdi-alert-circle",
+                "sort": 0,
+            }
+        if "重试" in status_text:
+            return {
+                "level": "warning",
+                "color": "warning",
+                "panel_color": "amber-lighten-3",
+                "icon": "mdi-refresh",
+                "sort": 1,
+            }
+        if "已签到" in status_text:
+            return {
+                "level": "success",
+                "color": "info",
+                "panel_color": "light-blue-lighten-3",
+                "icon": "mdi-check",
+                "sort": 3,
+            }
+        if "成功" in status_text:
+            return {
+                "level": "success",
+                "color": "success",
+                "panel_color": "teal-lighten-3",
+                "icon": "mdi-check-circle",
+                "sort": 3,
+            }
+        if status_text:
+            return {
+                "level": "none",
+                "color": "grey",
+                "panel_color": "grey-lighten-1",
+                "icon": "mdi-help-circle-outline",
+                "sort": 2,
+            }
+        return {
+            "level": "none",
+            "color": "grey",
+            "panel_color": "grey-lighten-1",
+            "icon": "mdi-minus-circle-outline",
+            "sort": 2,
+        }
+
+    @staticmethod
+    def _latest_record(records: list, date_label: str = None) -> dict:
+        """Return the newest history record, optionally constrained to one day."""
+        filtered_records = records
+        if date_label:
+            filtered_records = [record for record in records if record.get("date") == date_label]
+        if not filtered_records:
+            return {}
+        try:
+            return sorted(
+                filtered_records,
+                key=lambda record: record.get("day_obj", datetime.min.date()),
+                reverse=True,
+            )[0]
+        except Exception as e:
+            logger.debug(f"获取最新记录失败: {str(e)}")
+            return filtered_records[0]
+
+    @staticmethod
+    def _date_label(day) -> str:
+        """Format a date using the historic storage key displayed by this page."""
+        return f"{day.month}月{day.day}日"
+
+    @classmethod
+    def _calculate_day_stats(cls, site_data: dict, date_label: str) -> dict:
+        """Count successful, retrying, failing, and absent records for one day."""
+        stats = {
+            "total": len(site_data),
+            "recorded": 0,
+            "success": 0,
+            "warning": 0,
+            "error": 0,
+            "none": 0,
+        }
+        for records in site_data.values():
+            record = cls._latest_record(records, date_label)
+            if not record:
+                stats["none"] += 1
+                continue
+            stats["recorded"] += 1
+            status_text = record.get("status") or record.get("message", "")
+            level = cls._status_meta(status_text).get("level")
+            if level in stats:
+                stats[level] += 1
+        return stats
+
+    @classmethod
+    def _site_sort_key(cls, site_name: str, records: list, display_dates: list) -> tuple:
+        """Show current-day failures and retries before successful detail panels."""
+        today_label = cls._date_label(display_dates[0]) if display_dates else ""
+        today_record = cls._latest_record(records, today_label)
+        latest_record = cls._latest_record(records)
+        status_text = ""
+        if today_record:
+            status_text = today_record.get("status") or today_record.get("message", "")
+        status_meta = cls._status_meta(status_text)
+        latest_day = latest_record.get("day_obj") if latest_record else None
+        try:
+            latest_ordinal = latest_day.toordinal() if latest_day else datetime.min.date().toordinal()
+        except Exception:
+            latest_ordinal = datetime.min.date().toordinal()
+        return status_meta["sort"], -latest_ordinal, str(site_name)
+
+    @classmethod
+    def _create_expansion_panel(cls, site_name, records, status_color, status_icon, latest_status):
         """创建站点折叠面板"""
         # 生成站点图标（使用站点名的首字母）
         site_initial = site_name[0].upper() if site_name else "?"
@@ -1213,25 +1492,9 @@ class AutoSignInEnhanced(_PluginBase):
             date_str = record.get("date", "")
             status_text = record.get("status", "未知状态")
 
-            # 确定状态颜色和图标
-            record_color = "success"
-            record_icon = "mdi-check-circle"
-
-            if "失败" in status_text or "错误" in status_text:
-                record_color = "error"
-                record_icon = "mdi-alert-circle"
-            elif "Cookie已失效" in status_text:
-                record_color = "error"
-                record_icon = "mdi-cookie-off"
-            elif "重试" in status_text:
-                record_color = "warning"
-                record_icon = "mdi-refresh"
-            elif "已签到" in status_text:
-                record_color = "info"
-                record_icon = "mdi-check"
-            elif "登录成功" in status_text:
-                record_color = "success"
-                record_icon = "mdi-login-variant"
+            record_meta = cls._status_meta(status_text or record.get("message", ""))
+            record_color = record_meta["color"]
+            record_icon = record_meta["icon"]
 
             # 创建记录项
             records_list.append({
