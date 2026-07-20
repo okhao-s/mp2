@@ -1,4 +1,5 @@
 from typing import Tuple
+from urllib.parse import urljoin
 
 from ruamel.yaml import CommentedMap
 
@@ -12,7 +13,8 @@ class HaiDan(_ISiteSigninHandler):
     海胆签到
     """
     # 匹配的站点Url，每一个实现类都需要设置为自己的站点Url
-    site_url = "haidan.video"
+    site_url = "haidan.cc"
+    site_urls = (site_url, "haidan.video")
 
     # 签到成功
     _succeed_regex = ['(?<=value=")已经打卡(?=")']
@@ -24,7 +26,7 @@ class HaiDan(_ISiteSigninHandler):
         :param url: 站点Url
         :return: 是否匹配，如匹配则会调用该类的signin方法
         """
-        return True if StringUtils.url_equal(url, cls.site_url) else False
+        return any(StringUtils.url_equal(url, site_url) for site_url in cls.site_urls)
 
     def signin(self, site_info: CommentedMap) -> Tuple[bool, str]:
         """
@@ -38,10 +40,11 @@ class HaiDan(_ISiteSigninHandler):
         proxy = site_info.get("proxy")
         render = site_info.get("render")
         timeout = site_info.get("timeout")
+        base_url = site_info.get("url")
 
         # 签到
         # 签到页会重定向到index.php，由于302重定向特性，导致index.php没有携带cookie
-        self.get_page_source(url='https://www.haidan.video/signin.php',
+        self.get_page_source(url=urljoin(base_url, '/signin.php'),
                              cookie=site_cookie,
                              ua=ua,
                              proxy=proxy,
@@ -49,7 +52,7 @@ class HaiDan(_ISiteSigninHandler):
                              timeout=timeout)
 
         # 重新携带cookie获取index.php查看签到结果
-        html_text = self.get_page_source(url='https://www.haidan.video/index.php',
+        html_text = self.get_page_source(url=urljoin(base_url, '/index.php'),
                                          cookie=site_cookie,
                                          ua=ua,
                                          proxy=proxy,
