@@ -61,7 +61,9 @@ class SiteHandler(BaseHTTPRequestHandler):
                 body, code = OK_PAGE, 200
             else:
                 cookie = self.headers.get("Cookie", "")
-                body = OK_PAGE if "cf_clearance=good" in cookie else CHALLENGE
+                ua = self.headers.get("User-Agent", "")
+                ok = "cf_clearance=good" in cookie and "FlareSolverr" in ua
+                body = OK_PAGE if ok else CHALLENGE
                 code = 200
             data = body.encode()
             self.send_response(code)
@@ -191,6 +193,19 @@ def main():
     check("场景2 没有再次解盾", FLARE["calls"] == before, f"calls={FLARE['calls']}")
     check("场景2 只发了一次直连请求", len(STATE["hits"]) - hits_before == 1,
           f"新增 {len(STATE['hits']) - hits_before} 次")
+    # ---------- 场景 2b：UA 不匹配则盾会重弹（验证 UA 绑定处理） ----------
+    reset()
+    p2 = make_plugin()
+    p2.signin_site(site_info())          # 直连被盾 → 解盾 → 缓存
+    before_calls = FLARE["calls"]
+    # 人为把缓存 UA 改错，模拟“用站点 UA 直连”
+    cache_path = os.path.join(p2.get_data_path(), "cf_clearance.json")
+    data = json.load(open(cache_path))
+    data["127.0.0.1"]["ua"] = "UA/1.0"
+    json.dump(data, open(cache_path, "w"))
+    name, msg = p2.signin_site(site_info())
+    check("场景2b UA 不匹配会重新解盾", FLARE["calls"] > before_calls,
+          f"calls {before_calls}→{FLARE['calls']}")
 
     # ---------- 场景 3：Cookie 失效 → 分类为登录失效，不重试 ----------
     reset(mode="login")

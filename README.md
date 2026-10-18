@@ -67,3 +67,11 @@ python3 tests/test_signin.py    # 用桩模块替换 MoviePilot 运行时，17 �
 - 仍匹配不到时，失败消息里会带 **页面文本片段**（前 120 字），据此判断是文案变体还是真的改版
 
 测试：`python3 tests/test_attendance_parser.py`（12 个文案用例）
+
+#### v0.7：cf_clearance 与 UA 绑定
+
+`cf_clearance` 是**和 UA、出口 IP 绑定**的。解盾用的是 FlareSolverr 的浏览器 UA，如果后续直连还用站点里配的那个 UA，Cloudflare 会认为 clearance 无效、重新弹盾（表现就是“解盾成功但下一次又失败”）。
+
+现在缓存 clearance 时连解盾 UA 一起存，复用缓存时**自动用解盾时的 UA** 发请求，站点原 UA 只在没有缓存时使用。
+
+测试：`tests/test_signin.py` 场景 2b 故意把缓存 UA 改错，断言会重新解盾（21/21 通过）。

@@ -2161,15 +2161,19 @@ class AutoSignInEnhanced(_PluginBase):
 
         # ---------- 第 1 层：直连（带缓存 clearance） ----------
         cookie = site_cookie
+        req_ua = ua
         cached = store.get(domain)
         if cached:
             cookie = merge_cookies(site_cookie, cached["cookie"])
-            logger.info(f"{site} 使用缓存 cf_clearance（剩余 {int(cached['expires'] - time.time())}s）")
+            # cf_clearance 与 UA 绑定：必须用解盾时的 UA 直连，否则盾会重新弹
+            if cached.get("ua"):
+                req_ua = cached["ua"]
+            logger.info(f"{site} 使用缓存 cf_clearance（剩余 {int(cached['expires'] - time.time())}s，UA 用解盾时的）")
         logger.info(f"开始站点签到：{site}，地址：{checkin_url}（直连）...")
-        html, status, err = self.__http_get(checkin_url, cookie, ua, proxies, timeout)
+        html, status, err = self.__http_get(checkin_url, cookie, req_ua, proxies, timeout)
         if not html and site_url != checkin_url:
             logger.info(f"{site} 签到页无响应，改访问首页：{site_url}")
-            html, status, err = self.__http_get(site_url, cookie, ua, proxies, timeout)
+            html, status, err = self.__http_get(site_url, cookie, req_ua, proxies, timeout)
         state, msg, kind = self.__judge(site, html, status, err, source="直连")
         if state:
             return state, msg, kind
