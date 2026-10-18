@@ -2079,6 +2079,29 @@ class AutoSignInEnhanced(_PluginBase):
             logger.warning(f"{site_name} 签到失败（{KIND_LABEL.get(kind, kind)}，耗时 {seconds}s）：{message}")
         return site_name, message
 
+    def _save_debug_html(self, site: str, html: str) -> str:
+        """未匹配到签到结果时把原始页面存下来，方便分析站点文案（只留最近 5 个）"""
+        if not html or len(html) > 3 * 1024 * 1024:
+            return ""
+        try:
+            import glob
+            base = os.path.join(str(self.get_data_path()), "debug")
+            os.makedirs(base, exist_ok=True)
+            safe = re.sub(r"[^\w.-]", "_", str(site or "site"))
+            fp = os.path.join(base, f"{safe}-{datetime.now().strftime('%Y%m%d-%H%M%S')}.html")
+            with open(fp, "w", encoding="utf-8") as f:
+                f.write(html)
+            files = sorted(glob.glob(os.path.join(base, "*.html")))
+            for old_fp in files[:-5]:
+                try:
+                    os.remove(old_fp)
+                except OSError:
+                    pass
+            return fp
+        except Exception as e:
+            logger.debug(f"保存调试页面失败：{e}")
+            return ""
+
     @staticmethod
     def __http_get(url: str, cookie: str, ua: str, proxies, timeout) -> Tuple[Optional[str], Optional[int], Optional[str]]:
         """直连取页面，返回 (html, status, error)"""
@@ -2090,8 +2113,7 @@ class AutoSignInEnhanced(_PluginBase):
             return None, None, "请求无响应"
         return res.text, res.status_code, None
 
-    @staticmethod
-    def __judge(site: str, html: Optional[str], status: Optional[int], err: Optional[str],
+    def __judge(self, site: str, html: Optional[str], status: Optional[int], err: Optional[str],
                 source: str = "") -> Tuple[bool, str, str]:
         """根据响应判断结果，并归类失败原因"""
         kind = cf_classify(html, status, err)
@@ -2105,8 +2127,11 @@ class AutoSignInEnhanced(_PluginBase):
         if sign_result:
             logger.info(f"{site} 签到结果：{sign_msg}（{source}）")
             return True, sign_msg, KIND_OK
-        snippet = re.sub(r"\s+", " ", (sign_msg or "")).strip()[:120]
+        snippet = re.sub(r"\s+", " ", (sign_msg or "")).strip()[:200]
+        saved = self._save_debug_html(site, html)
         logger.warning(f"{site} 已登录但未匹配到签到结果，页面文本片段：{snippet}")
+        if saved:
+            logger.warning(f"{site} 原始页面已保存：{saved}")
         return False, fmt_failure(KIND_LAYOUT, f"未匹配到签到结果，页面文本：{snippet}"), KIND_LAYOUT
 
     def __signin_base(self, site_info: CommentedMap) -> Tuple[bool, str, str]:

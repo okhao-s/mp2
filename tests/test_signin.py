@@ -34,6 +34,9 @@ CHALLENGE = """<!DOCTYPE html><html><head><title>Just a moment...</title></head>
 LOGIN_PAGE = """<html><body><form action="takelogin.php"><input name="username"></form>
 <div>请先登录</div></body></html>"""
 
+NORESULT_PAGE = """<html><body><div>欢迎回来</div><a href="logout.php">logout</a>
+<div>个人中心</div></body></html>"""
+
 OK_PAGE = """<html><body><div>欢迎回来</div><div>签到已得42 个魔力值</div>
 <a href="logout.php">logout</a></body></html>"""
 
@@ -50,7 +53,9 @@ class SiteHandler(BaseHTTPRequestHandler):
         try:
             time.sleep(0.15)  # 模拟站点响应时间，便于观察并发
             mode = STATE["mode"]
-            if mode == "login":
+            if mode == "norez":
+                body, code = NORESULT_PAGE, 200
+            elif mode == "login":
                 body, code = LOGIN_PAGE, 200
             elif mode == "ok":
                 body, code = OK_PAGE, 200
@@ -223,14 +228,33 @@ def main():
     reset(mode="ok")
     p = make_plugin(_jitter=2, _concurrency=2)
     sites = [site_info(name=f"S{i}", url=f"http://127.0.0.1:{SITE_PORT}/?i={i}") for i in range(6)]
+    # 固定抖动值，避免计时波动导致断言不稳定
+    import app.plugins.autosigninenhanced as plugin_mod
+    real_uniform = plugin_mod.random.uniform
+    plugin_mod.random.uniform = lambda a, b: 1.5
     t0 = time.time()
     from multiprocessing.dummy import Pool as ThreadPool
-    with ThreadPool(min(len(sites), p._concurrency)) as pool:
-        out = pool.map(p.signin_site, sites)
+    try:
+        with ThreadPool(min(len(sites), p._concurrency)) as pool:
+            out = pool.map(p.signin_site, sites)
+    finally:
+        plugin_mod.random.uniform = real_uniform
     elapsed = time.time() - t0
     check("场景6 6 站全部成功", all("签到已得" in m for _, m in out), f"{len(out)} 个")
     check("场景6 并发不超过 2", STATE["max_in_flight"] <= 2, f"峰值 {STATE['max_in_flight']}")
-    check("场景6 抖动生效（耗时>3s）", elapsed > 3, f"耗时 {elapsed:.1f}s")
+    check("场景6 每站抖动生效（6站×1.5s/2并发≈4.5s）", elapsed > 4, f"耗时 {elapsed:.1f}s")
+
+    # ---------- 场景 7：已登录但文案不匹配 → 改版分类 + 保存原始页面 ----------
+    reset(mode="norez")
+    p = make_plugin()
+    debug_dir = os.path.join(str(p.get_data_path()), "debug")
+    for f in os.listdir(debug_dir) if os.path.isdir(debug_dir) else []:
+        os.remove(os.path.join(debug_dir, f))
+    name, msg = p.signin_site(site_info())
+    check("场景7 判定站点改版", "站点改版" in msg, msg[:60])
+    check("场景7 消息带页面文本片段", "页面文本" in msg, msg[:80])
+    saved = os.listdir(debug_dir) if os.path.isdir(debug_dir) else []
+    check("场景7 原始页面已落盘", len(saved) == 1, f"{saved}")
 
     # ---------- 汇总 ----------
     ok = sum(1 for _, c, _ in results if c)
