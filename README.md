@@ -76,9 +76,9 @@ python3 tests/test_signin.py    # 用桩模块替换 MoviePilot 运行时，17 �
 
 测试：`tests/test_signin.py` 场景 2b 故意把缓存 UA 改错，断言会重新解盾（21/21 通过）。
 
-### 3. [资源站签到]
+### 3. [聚影签到]
 
-针对资源站（默认聚影 `https://www.jying.top`）的每日签到，**不是 PT 站插件**，独立安装使用。
+针对聚影（`https://www.jying.top`）的每日签到，**不是 PT 站插件**，独立安装使用（插件 ID 仍为 `ResourceSiteCheckin`，已安装的无需重装）。
 
 - 签到方式可选：**普通签到** 或 **幸运签到**（自愿，可能扣分，站点本身规定每日二选一）
 - 登录方式：填账号密码自动登录拿 token；也可以只填 token（浏览器请求头 `X-App-User-Token`）。token 失效会自动用账号密码重登

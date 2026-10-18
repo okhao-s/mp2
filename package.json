@@ -32,15 +32,16 @@
         }
     },
     "ResourceSiteCheckin": {
-        "name": "资源站签到",
-        "description": "资源站（聚影等）自动签到，支持普通/幸运签到、CF 盾兜底、token 自动续期。",
+        "name": "聚影签到",
+        "description": "聚影（jying.top）自动签到：普通/幸运签到、CF 盾兜底、token 自动续期。",
         "labels": "签到",
-        "version": "1.2",
+        "version": "1.3",
         "icon": "https://raw.githubusercontent.com/okhao-s/mp2/main/icons/fruit.png",
         "author": "okhao",
         "level": 1,
         "v2": true,
         "history": {
+            "v1.3": "改名：资源站签到 → 聚影签到（插件 ID 不变，已安装的无需重装）",
             "v1.2": "补齐 get_api/get_command：_PluginBase 是抽象基类，缺 get_api 会无法实例化（加载报 abstract class 错误）",
             "v1.1": "数据页容错：读取失败不再抛异常（修复「插件数据加载失败」）",
             "v1.0": "初始版本：登录拿 token、查询签到状态、普通签到、幸运签到、CF 盾 FlareSolverr 兜底"

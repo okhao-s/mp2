@@ -21,12 +21,12 @@ MODE_LABEL = {"normal": "普通签到", "luck": "幸运签到"}
 
 
 class ResourceSiteCheckin(_PluginBase):
-    """资源站签到（聚影等）：登录 → 查状态 → 普通/幸运签到 → 通知"""
+    """聚影签到：登录 → 查状态 → 普通/幸运签到 → 通知"""
 
-    plugin_name = "资源站签到"
-    plugin_desc = "资源站（聚影等）自动签到，支持普通签到 / 幸运签到、CF 盾兜底、签到状态查询。"
+    plugin_name = "聚影签到"
+    plugin_desc = "聚影（jying.top）自动签到，支持普通签到 / 幸运签到、CF 盾兜底、签到状态查询。"
     plugin_icon = "fruit.png"
-    plugin_version = "1.2"
+    plugin_version = "1.3"
     plugin_author = "okhao"
     author_url = "https://github.com/okhao-s/mp2"
     plugin_config_prefix = "resourcesitecheckin_"
