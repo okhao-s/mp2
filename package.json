@@ -10,5 +10,37 @@
         "history": {
             "v0.1": "初始版本"
         }
+    },
+    "AutoSignInEnhanced": {
+        "name": "站点自动签到增强",
+        "description": "自动模拟登录、签到站点（CF 三层降级 + 失败分类重试）。",
+        "labels": "站点",
+        "version": "2.9.1-Enhanced-v0.7",
+        "icon": "https://raw.githubusercontent.com/okhao-s/mp2/main/icons/fruit.png",
+        "author": "thsrite,cancelpt",
+        "level": 2,
+        "v2": true,
+        "history": {
+            "2.9.1-Enhanced-v0.7": "修复 cf_clearance 与 UA 绑定：复用缓存时必须用解盾时的 UA 直连，否则盾会重新弹（我堡这类站解盾后仍被判失败的根因）",
+            "2.9.1-Enhanced-v0.6": "未匹配到签到结果时：消息带 200 字页面文本片段，并把原始页面存到插件数据目录 debug/（保留最近 5 个），便于定位站点文案",
+            "2.9.1-Enhanced-v0.5": "签到结果解析重写：兼容「签到已得 N」（含空格）、「签到成功，获得 N」、「今天已经签到过」、「打卡成功」等变体；未匹配时在日志和通知里带页面文本片段",
+            "2.9.1-Enhanced-v0.4": "CF 三层降级（直连→FlareSolverr→仿真）+ cf_clearance 按站缓存；并发限 2 + 每站随机抖动；失败分类与网络/盾类自动重试",
+            "v2.9.1-Enhanced-v0.3": "保留增强历史详情页，合并 2.9.1 站点名称解析与每日状态概要",
+            "v2.8.1-Enhanced-v0.2": "增强了签到、登录历史记录显示",
+            "v2.8.1-Enhanced-v0.1": "从AutoSignIn v2.8.1 源码修改而来"
+        }
+    },
+    "ResourceSiteCheckin": {
+        "name": "资源站签到",
+        "description": "资源站（聚影等）自动签到，支持普通/幸运签到、CF 盾兜底、token 自动续期。",
+        "labels": "签到",
+        "version": "1.0",
+        "icon": "https://raw.githubusercontent.com/okhao-s/mp2/main/icons/fruit.png",
+        "author": "okhao",
+        "level": 1,
+        "v2": true,
+        "history": {
+            "v1.0": "初始版本：登录拿 token、查询签到状态、普通签到、幸运签到、CF 盾 FlareSolverr 兜底"
+        }
     }
 }
