@@ -1,4 +1,7 @@
+import os
+import random
 import re
+import time
 import traceback
 from datetime import datetime, timedelta
 from multiprocessing.dummy import Pool as ThreadPool
@@ -26,6 +29,33 @@ from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.cron import CronTrigger
 from ruamel.yaml import CommentedMap
 from bs4 import BeautifulSoup
+
+from .cf_helper import (
+    KIND_LABEL,
+    KIND_LAYOUT,
+    KIND_LOGIN,
+    KIND_NETWORK,
+    KIND_OK,
+    KIND_SHIELD,
+    RETRYABLE,
+    ClearanceStore,
+    FlareSolverr,
+    classify as cf_classify,
+    classify_message,
+    cookies_to_string,
+    extract_clearance,
+    fmt_failure,
+    is_challenge,
+    merge_cookies,
+    site_domain,
+)
+
+
+def _int_or(value, default: int) -> int:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return default
 
 
 def check_attendance(html_str) -> Tuple[bool, str]:
@@ -126,6 +156,15 @@ class AutoSignInEnhanced(_PluginBase):
     _end_time: int = None
     _auto_cf: int = 0
 
+    # CF 三层降级 + 并发控制
+    _flare_url: str = ""
+    _flare_timeout: int = 60
+    _flare_proxy: str = ""
+    _concurrency: int = 2
+    _jitter: int = 3
+    _retry_times: int = 2
+    _clearance_ttl: int = 1800
+
     def init_plugin(self, config: dict = None):
 
         # 停止现有任务
@@ -143,6 +182,15 @@ class AutoSignInEnhanced(_PluginBase):
             self._retry_keyword = config.get("retry_keyword")
             self._auto_cf = config.get("auto_cf")
             self._clean = config.get("clean")
+
+            # CF 三层降级 + 并发
+            self._flare_url = (config.get("flare_url") or "").strip()
+            self._flare_timeout = _int_or(config.get("flare_timeout"), 60)
+            self._flare_proxy = (config.get("flare_proxy") or "").strip()
+            self._concurrency = max(1, _int_or(config.get("concurrency"), 2))
+            self._jitter = max(0, _int_or(config.get("jitter"), 3))
+            self._retry_times = max(0, _int_or(config.get("retry_times"), 2))
+            self._clearance_ttl = _int_or(config.get("clearance_ttl"), 1800)
 
             # 过滤掉已删除的站点
             all_sites = [site.id for site in SiteOper().list_order_by_pri()] + [site.get("id") for site in
@@ -194,6 +242,13 @@ class AutoSignInEnhanced(_PluginBase):
                 "retry_keyword": self._retry_keyword,
                 "auto_cf": self._auto_cf,
                 "clean": self._clean,
+                "flare_url": self._flare_url,
+                "flare_timeout": self._flare_timeout,
+                "flare_proxy": self._flare_proxy,
+                "concurrency": self._concurrency,
+                "jitter": self._jitter,
+                "retry_times": self._retry_times,
+                "clearance_ttl": self._clearance_ttl,
             }
         )
 
@@ -427,7 +482,7 @@ class AutoSignInEnhanced(_PluginBase):
                                         'component': 'VTextField',
                                         'props': {
                                             'model': 'queue_cnt',
-                                            'label': '队列数量'
+                                            'label': '队列数量（旧字段，已由并发数替代）'
                                         }
                                     }
                                 ]
@@ -462,6 +517,129 @@ class AutoSignInEnhanced(_PluginBase):
                                             'model': 'auto_cf',
                                             'label': '自动优选',
                                             'placeholder': '命中重试关键词次数（0-关闭）'
+                                        }
+                                    }
+                                ]
+                            }
+                        ]
+                    },
+                    {
+                        'component': 'VRow',
+                        'content': [
+                            {
+                                'component': 'VCol',
+                                'props': {'cols': 12},
+                                'content': [
+                                    {
+                                        'component': 'VAlert',
+                                        'props': {
+                                            'type': 'info',
+                                            'variant': 'tonal',
+                                            'text': 'CF 三层降级：直连 → FlareSolverr（自动缓存 cf_clearance，按站点复用）→ 浏览器仿真。'
+                                                    '直连能过就不走 FlareSolverr，省时间也少触发风控。'
+                                        }
+                                    }
+                                ]
+                            }
+                        ]
+                    },
+                    {
+                        'component': 'VRow',
+                        'content': [
+                            {
+                                'component': 'VCol',
+                                'props': {'cols': 12, 'md': 6},
+                                'content': [
+                                    {
+                                        'component': 'VTextField',
+                                        'props': {
+                                            'model': 'flare_url',
+                                            'label': 'FlareSolverr 地址',
+                                            'placeholder': 'http://flaresolverr:8191（留空则跳过该层）'
+                                        }
+                                    }
+                                ]
+                            },
+                            {
+                                'component': 'VCol',
+                                'props': {'cols': 12, 'md': 3},
+                                'content': [
+                                    {
+                                        'component': 'VTextField',
+                                        'props': {
+                                            'model': 'flare_timeout',
+                                            'label': '解盾超时(秒)',
+                                            'placeholder': '60'
+                                        }
+                                    }
+                                ]
+                            },
+                            {
+                                'component': 'VCol',
+                                'props': {'cols': 12, 'md': 3},
+                                'content': [
+                                    {
+                                        'component': 'VTextField',
+                                        'props': {
+                                            'model': 'flare_proxy',
+                                            'label': '解盾代理',
+                                            'placeholder': 'http://ip:port（机房 IP 过不了强盾时填）'
+                                        }
+                                    }
+                                ]
+                            },
+                            {
+                                'component': 'VCol',
+                                'props': {'cols': 12, 'md': 3},
+                                'content': [
+                                    {
+                                        'component': 'VTextField',
+                                        'props': {
+                                            'model': 'concurrency',
+                                            'label': '并发数',
+                                            'placeholder': '2（建议 1-2，太高易触发风控）'
+                                        }
+                                    }
+                                ]
+                            },
+                            {
+                                'component': 'VCol',
+                                'props': {'cols': 12, 'md': 3},
+                                'content': [
+                                    {
+                                        'component': 'VTextField',
+                                        'props': {
+                                            'model': 'jitter',
+                                            'label': '随机抖动(秒)',
+                                            'placeholder': '3（每站 0~N 秒随机延迟）'
+                                        }
+                                    }
+                                ]
+                            },
+                            {
+                                'component': 'VCol',
+                                'props': {'cols': 12, 'md': 3},
+                                'content': [
+                                    {
+                                        'component': 'VTextField',
+                                        'props': {
+                                            'model': 'retry_times',
+                                            'label': '失败重试次数',
+                                            'placeholder': '2（仅网络/盾类失败重试）'
+                                        }
+                                    }
+                                ]
+                            },
+                            {
+                                'component': 'VCol',
+                                'props': {'cols': 12, 'md': 3},
+                                'content': [
+                                    {
+                                        'component': 'VTextField',
+                                        'props': {
+                                            'model': 'clearance_ttl',
+                                            'label': 'cf_clearance 缓存(秒)',
+                                            'placeholder': '1800'
                                         }
                                     }
                                 ]
@@ -587,7 +765,14 @@ class AutoSignInEnhanced(_PluginBase):
             "queue_cnt": 5,
             "sign_sites": [],
             "login_sites": [],
-            "retry_keyword": "错误|失败"
+            "retry_keyword": "错误|失败",
+            "flare_url": "",
+            "flare_timeout": 60,
+            "flare_proxy": "",
+            "concurrency": 2,
+            "jitter": 3,
+            "retry_times": 2,
+            "clearance_ttl": 1800
         }
 
     def __custom_sites(self) -> List[Any]:
@@ -1674,13 +1859,14 @@ class AutoSignInEnhanced(_PluginBase):
             logger.info(f"没有需要{type_str}的站点")
             return
 
-        # 执行签到
-        logger.info(f"开始执行{type_str}任务 ...")
+        # 执行签到（并发受限 + 每站随机抖动，避免同时登录触发风控）
+        logger.info(f"开始执行{type_str}任务，并发 {self._concurrency}，抖动 0~{self._jitter}s ...")
+        worker_cnt = max(1, min(len(do_sites), int(self._concurrency or 2)))
         if type_str == "签到":
-            with ThreadPool(min(len(do_sites), int(self._queue_cnt))) as p:
+            with ThreadPool(worker_cnt) as p:
                 status = p.map(self.signin_site, do_sites)
         else:
-            with ThreadPool(min(len(do_sites), int(self._queue_cnt))) as p:
+            with ThreadPool(worker_cnt) as p:
                 status = p.map(self.login_site, do_sites)
 
         if status:
@@ -1848,39 +2034,92 @@ class AutoSignInEnhanced(_PluginBase):
                 message=f"站点【{site_name}】{message or '签到成功'}"
             )
 
-    def signin_site(self, site_info: CommentedMap) -> Tuple[str, str]:
-        """
-        签到一个站点
-        """
+    def _clearance_store(self) -> ClearanceStore:
+        """cf_clearance 缓存文件（按站点存，含 UA）"""
+        try:
+            base = str(self.get_data_path())
+        except Exception:
+            base = os.path.join(settings.CONFIG_PATH, "plugin_data", "autosigninenhanced")
+        return ClearanceStore(os.path.join(base, "cf_clearance.json"), self._clearance_ttl)
+
+    def _flare(self) -> FlareSolverr:
+        return FlareSolverr(self._flare_url, self._flare_timeout)
+
+    def _signin_once(self, site_info: CommentedMap) -> Tuple[bool, str, str]:
+        """执行一次签到（适配器优先，否则走通用流程）"""
         site_module = self.__build_class(site_info.get("url"))
-        # 开始记时
-        start_time = datetime.now()
         if site_module and hasattr(site_module, "signin"):
             try:
                 state, message = site_module().signin(site_info)
             except Exception as e:
                 traceback.print_exc()
-                state, message = False, f"签到失败：{str(e)}"
-        else:
-            state, message = self.__signin_base(site_info)
-        # 统计
+                return False, fmt_failure(KIND_NETWORK, str(e)), KIND_NETWORK
+            return state, message, (KIND_OK if state else classify_message(message))
+        return self.__signin_base(site_info)
+
+    def signin_site(self, site_info: CommentedMap) -> Tuple[str, str]:
+        """
+        签到一个站点：每站随机抖动 + 失败分类 + 仅对网络/盾类失败自动重试
+        """
+        site_name = site_info.get("name")
+        if self._jitter:
+            time.sleep(random.uniform(0, float(self._jitter)))
+        attempts = max(1, int(self._retry_times or 0) + 1)
+        start_time = datetime.now()
+        state, message, kind = False, "", KIND_LAYOUT
+        for i in range(attempts):
+            state, message, kind = self._signin_once(site_info)
+            if state or kind not in RETRYABLE:
+                break
+            if i + 1 < attempts:
+                backoff = min(30, 5 * (2 ** i)) + random.uniform(0, 3)
+                logger.warning(f"{site_name} {KIND_LABEL.get(kind, kind)}，{backoff:.0f}s 后重试"
+                               f"（第 {i + 1}/{attempts - 1} 次）")
+                time.sleep(backoff)
         seconds = (datetime.now() - start_time).seconds
         domain = StringUtils.get_url_domain(site_info.get('url'))
         if state:
             SiteOper().success(domain=domain, seconds=seconds)
         else:
             SiteOper().fail(domain)
-        return site_info.get("name"), message
+            logger.warning(f"{site_name} 签到失败（{KIND_LABEL.get(kind, kind)}，耗时 {seconds}s）：{message}")
+        return site_name, message
 
     @staticmethod
-    def __signin_base(site_info: CommentedMap) -> Tuple[bool, str]:
+    def __http_get(url: str, cookie: str, ua: str, proxies, timeout) -> Tuple[Optional[str], Optional[int], Optional[str]]:
+        """直连取页面，返回 (html, status, error)"""
+        try:
+            res = RequestUtils(cookies=cookie, ua=ua, proxies=proxies, timeout=timeout).get_res(url=url)
+        except Exception as e:
+            return None, None, str(e)
+        if res is None:
+            return None, None, "请求无响应"
+        return res.text, res.status_code, None
+
+    @staticmethod
+    def __judge(site: str, html: Optional[str], status: Optional[int], err: Optional[str],
+                source: str = "") -> Tuple[bool, str, str]:
+        """根据响应判断结果，并归类失败原因"""
+        kind = cf_classify(html, status, err)
+        if kind == KIND_NETWORK:
+            return False, fmt_failure(KIND_NETWORK, err or "无法打开网站"), KIND_NETWORK
+        if kind == KIND_SHIELD:
+            return False, fmt_failure(KIND_SHIELD, "命中 Cloudflare 挑战页"), KIND_SHIELD
+        if kind == KIND_LOGIN or not SiteUtils.is_logged_in(html or ""):
+            return False, fmt_failure(KIND_LOGIN, "Cookie 已失效"), KIND_LOGIN
+        sign_result, sign_msg = check_attendance(html or "")
+        if sign_result:
+            logger.info(f"{site} 签到结果：{sign_msg}（{source}）")
+            return True, sign_msg, KIND_OK
+        return False, fmt_failure(KIND_LAYOUT, "已登录但未匹配到签到结果，站点可能改版"), KIND_LAYOUT
+
+    def __signin_base(self, site_info: CommentedMap) -> Tuple[bool, str, str]:
         """
-        通用签到处理
-        :param site_info: 站点信息
-        :return: 签到结果信息
+        通用签到：直连 → FlareSolverr（缓存 cf_clearance）→ 浏览器仿真
+        :return: (是否成功, 消息, 失败类别)
         """
         if not site_info:
-            return False, ""
+            return False, "", KIND_LAYOUT
         site = site_info.get("name")
         site_url = site_info.get("url")
         site_cookie = site_info.get("cookie")
@@ -1890,76 +2129,84 @@ class AutoSignInEnhanced(_PluginBase):
         proxy_server = settings.PROXY_SERVER if site_info.get("proxy") else None
         timeout = site_info.get("timeout") or 60
         if not site_url or not site_cookie:
-            logger.warn(f"未配置 {site} 的站点地址或Cookie，无法签到")
-            return False, ""
-        # 模拟登录
-        try:
-            # 访问链接
-            checkin_url = site_url
-            if site_url.find("attendance.php") == -1:
-                # 拼登签到地址
-                checkin_url = urljoin(site_url, "attendance.php")
-            logger.info(f"开始站点签到：{site}，地址：{checkin_url}...")
-            if render:
+            logger.warning(f"未配置 {site} 的站点地址或Cookie，无法签到")
+            return False, fmt_failure(KIND_LOGIN, "未配置站点地址或 Cookie"), KIND_LOGIN
+
+        checkin_url = site_url
+        if site_url.find("attendance.php") == -1:
+            checkin_url = urljoin(site_url, "attendance.php")
+        domain = site_domain(site_url)
+        store = self._clearance_store()
+
+        # ---------- 第 1 层：直连（带缓存 clearance） ----------
+        cookie = site_cookie
+        cached = store.get(domain)
+        if cached:
+            cookie = merge_cookies(site_cookie, cached["cookie"])
+            logger.info(f"{site} 使用缓存 cf_clearance（剩余 {int(cached['expires'] - time.time())}s）")
+        logger.info(f"开始站点签到：{site}，地址：{checkin_url}（直连）...")
+        html, status, err = self.__http_get(checkin_url, cookie, ua, proxies, timeout)
+        if not html and site_url != checkin_url:
+            logger.info(f"{site} 签到页无响应，改访问首页：{site_url}")
+            html, status, err = self.__http_get(site_url, cookie, ua, proxies, timeout)
+        state, msg, kind = self.__judge(site, html, status, err, source="直连")
+        if state:
+            return state, msg, kind
+        if kind == KIND_LOGIN and cached:
+            # 缓存的 clearance 可能已失效，清掉下次重解
+            store.invalidate(domain)
+        if kind == KIND_NETWORK:
+            return state, msg, kind
+        if kind != KIND_SHIELD and not render:
+            return state, msg, kind
+
+        # ---------- 第 2 层：FlareSolverr ----------
+        if kind == KIND_SHIELD and self._flare_url:
+            logger.warning(f"{site} 直连被盾，尝试 FlareSolverr（{self._flare_url}）...")
+            solved = self._flare().solve(
+                url=checkin_url,
+                cookies=cookie,
+                proxy=self._flare_proxy or None,
+                max_timeout_ms=max(20000, int(self._flare_timeout) * 1000),
+            )
+            if solved and solved.get("html"):
+                clearance = extract_clearance(solved.get("cookies") or [])
+                if clearance:
+                    store.set(domain, clearance, solved.get("user_agent") or "")
+                    logger.info(f"{site} 已缓存 cf_clearance（TTL {self._clearance_ttl}s）")
+                state, msg, kind = self.__judge(site, solved.get("html"), solved.get("status") or 200,
+                                                None, source="FlareSolverr")
+                if state:
+                    return state, msg, kind
+                if kind == KIND_NETWORK:
+                    return state, msg, kind
+            else:
+                logger.warning(f"{site} FlareSolverr 解盾失败（检查地址/代理/是否已启动）")
+
+        # ---------- 第 3 层：浏览器仿真 ----------
+        if render:
+            logger.warning(f"{site} 尝试浏览器仿真兜底...")
+            try:
                 page_source = PlaywrightHelper().get_page_source(url=checkin_url,
                                                                  cookies=site_cookie,
                                                                  ua=ua,
                                                                  proxies=proxy_server,
                                                                  timeout=timeout)
+            except Exception as e:
+                logger.warning(f"{site} 浏览器仿真异常：{e}")
+                page_source = None
+            if page_source:
                 if not SiteUtils.is_logged_in(page_source):
-                    if under_challenge(page_source):
-                        return False, f"无法通过Cloudflare！"
-                    return False, f"仿真登录失败，Cookie已失效！"
-                else:
-                    # 判断是否已签到
-                    sign_result, sign_msg = check_attendance(page_source)
-                    logger.info("%s 签到结果：%s" % (sign_result and "签到成功" or "签到失败", sign_msg))
-                    if not sign_result:
-                        return False, "获取签到结果失败"
+                    if under_challenge(page_source) or is_challenge(page_source):
+                        return False, fmt_failure(KIND_SHIELD, "直连/FlareSolverr/浏览器仿真均未通过"), KIND_SHIELD
+                    return False, fmt_failure(KIND_LOGIN, "仿真登录失败，Cookie 已失效"), KIND_LOGIN
+                sign_result, sign_msg = check_attendance(page_source)
+                if sign_result:
+                    logger.info(f"{site} 签到结果：{sign_msg}（浏览器仿真）")
+                    return True, sign_msg, KIND_OK
+                return False, fmt_failure(KIND_LAYOUT, "仿真已登录但未匹配到签到结果"), KIND_LAYOUT
 
-                    return sign_result, sign_msg
-            else:
-                res = RequestUtils(cookies=site_cookie,
-                                   ua=ua,
-                                   proxies=proxies,
-                                   timeout=timeout
-                                   ).get_res(url=checkin_url)
-                if not res and site_url != checkin_url:
-                    logger.info(f"开始站点模拟登录：{site}，地址：{site_url}...")
-                    res = RequestUtils(cookies=site_cookie,
-                                       ua=ua,
-                                       proxies=proxies,
-                                       timeout=timeout
-                                       ).get_res(url=site_url)
-                # 判断登录状态
-                if res and res.status_code in [200, 500, 403]:
-                    if not SiteUtils.is_logged_in(res.text):
-                        if under_challenge(res.text):
-                            msg = "站点被Cloudflare防护，请打开站点浏览器仿真"
-                        elif res.status_code == 200:
-                            msg = "Cookie已失效"
-                        else:
-                            msg = f"状态码：{res.status_code}"
-                        logger.warn(f"{site} 签到失败，{msg}")
-                        return False, f"签到失败，{msg}！"
-                    else:
-                        # 判断是否已签到
-                        sign_result, sign_msg = check_attendance(res.text)
-                        logger.info("%s 签到结果：%s" % (sign_result and "签到成功" or "签到失败", sign_msg))
-                        if not sign_result:
-                            return False, "模拟浏览器，尝试获取签到结果失败"
-
-                        return sign_result, sign_msg
-                elif res is not None:
-                    logger.warn(f"{site} 签到失败，状态码：{res.status_code}")
-                    return False, f"签到失败，状态码：{res.status_code}！"
-                else:
-                    logger.warn(f"{site} 签到失败，无法打开网站")
-                    return False, f"签到失败，无法打开网站！"
-        except Exception as e:
-            logger.warn("%s 签到失败：%s" % (site, str(e)))
-            traceback.print_exc()
-            return False, f"签到失败：{str(e)}！"
+        return state, msg, kind
 
     def login_site(self, site_info: CommentedMap) -> Tuple[str, str]:
         """
