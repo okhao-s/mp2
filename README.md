@@ -75,3 +75,28 @@ python3 tests/test_signin.py    # 用桩模块替换 MoviePilot 运行时，17 �
 现在缓存 clearance 时连解盾 UA 一起存，复用缓存时**自动用解盾时的 UA** 发请求，站点原 UA 只在没有缓存时使用。
 
 测试：`tests/test_signin.py` 场景 2b 故意把缓存 UA 改错，断言会重新解盾（21/21 通过）。
+
+### 3. [资源站签到]
+
+针对资源站（默认聚影 `https://www.jying.top`）的每日签到，**不是 PT 站插件**，独立安装使用。
+
+- 签到方式可选：**普通签到** 或 **幸运签到**（自愿，可能扣分，站点本身规定每日二选一）
+- 登录方式：填账号密码自动登录拿 token；也可以只填 token（浏览器请求头 `X-App-User-Token`）。token 失效会自动用账号密码重登
+- 会先查 `/api/app/checkin/stats/`，**今日已签到就直接返回**，不重复请求
+- 命中 Cloudflare 挑战时用 FlareSolverr 解盾（`cf_clearance` 与 UA 绑定，解盾后自动切换 UA）
+- 支持 cron 定时、立即运行一次、签到结果通知、插件页查看最近一次结果
+
+接口（来自站点前端 bundle）：
+
+| 用途 | 方法 | 路径 |
+|---|---|---|
+| 拿 csrftoken | GET | `/api/csrf/` |
+| 登录 | POST | `/api/app/login/` → `data.token` |
+| 签到状态 | GET | `/api/app/checkin/stats/` |
+| 普通签到 | POST | `/api/app/checkin/do/` |
+| 幸运签到状态 | GET | `/api/app/checkin/luck/` |
+| 幸运签到 | POST | `/api/app/checkin/luck/draw/` |
+
+鉴权：请求头 `X-App-User-Token`，POST 另带 `X-CSRFToken`（来自 `csrftoken` cookie）。
+
+测试：`python3 tests/test_resourcesitecheckin.py`（13 项断言：普通/幸运签到、已签到跳过、token 失效重登、密码错误、CF 解盾）

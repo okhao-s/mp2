@@ -18,6 +18,10 @@ class _PluginBase:
     def get_data(self, key=None):
         return self._data.get(key)
 
+    def post_message(self, mtype=None, title=None, text=None, **kw):
+        self._messages = getattr(self, "_messages", [])
+        self._messages.append({"type": mtype, "title": title, "text": text})
+
     def get_data_path(self):
         p = os.path.join(os.environ.get("MP_CONFIG_PATH", "/tmp/mp-test-config"), "plugin_data", "autosigninenhanced")
         os.makedirs(p, exist_ok=True)
