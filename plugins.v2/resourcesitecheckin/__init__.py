@@ -26,7 +26,7 @@ class ResourceSiteCheckin(_PluginBase):
     plugin_name = "资源站签到"
     plugin_desc = "资源站（聚影等）自动签到，支持普通签到 / 幸运签到、CF 盾兜底、签到状态查询。"
     plugin_icon = "fruit.png"
-    plugin_version = "1.1"
+    plugin_version = "1.2"
     plugin_author = "okhao"
     author_url = "https://github.com/okhao-s/mp2"
     plugin_config_prefix = "resourcesitecheckin_"
@@ -199,6 +199,14 @@ class ResourceSiteCheckin(_PluginBase):
             "flare_proxy": "",
             "proxy": "",
         }
+
+    def get_api(self) -> List[Dict[str, Any]]:
+        """插件对外 API（本插件由定时任务驱动，不需要额外接口）"""
+        return []
+
+    def get_command(self) -> List[Dict[str, Any]]:
+        """插件命令（无）"""
+        return []
 
     def get_page(self) -> List[dict]:
         """数据页：任何异常都不向外抛，否则前端会显示「插件数据加载失败」"""
