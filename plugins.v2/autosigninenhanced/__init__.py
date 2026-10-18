@@ -58,63 +58,57 @@ def _int_or(value, default: int) -> int:
         return default
 
 
+def _page_text(html_str: str) -> str:
+    """把 HTML 压成一行纯文本，避免空格/换行导致正则匹配失败。"""
+    soup = BeautifulSoup(html_str or "", "html.parser")
+    return re.sub(r"\s+", " ", soup.get_text(" ", strip=True)).strip()
+
+
+# 签到成功的文案变体（NexusPHP 各站魔改程度不同，按可靠性从高到低匹配）
+_ATTENDANCE_PATTERNS = (
+    (r"签到已得\s*(\d+)", lambda m: f"签到已得{m.group(1)}"),
+    (r"第\s*(\d+)\s*次签到.*?连续\s*(\d+)\s*天.*?获得\s*(\d+)",
+     lambda m: f"第 {m.group(1)} 次签到，连续 {m.group(2)} 天，获得 {m.group(3)} 魔力值"),
+    (r"本次签到获得\s*(\d+)", lambda m: f"本次签到获得 {m.group(1)} 个魔力值"),
+    (r"签到成功[，,、\s]*获得\s*(\d+)", lambda m: f"签到成功，获得 {m.group(1)} 个魔力值"),
+    (r"获得\s*(\d+)\s*个?魔力值", lambda m: f"获得 {m.group(1)} 个魔力值"),
+    (r"连续签到\s*(\d+)\s*天", lambda m: f"连续签到 {m.group(1)} 天"),
+)
+
+# 已签到类文案（无需再签）
+_ALREADY_PATTERNS = (
+    "今天已经签到",
+    "已签到过",
+    "已经签到过了",
+    "已签到",
+    "今日已签",
+    "打卡成功",
+    "签到成功",
+)
+
+
 def check_attendance(html_str) -> Tuple[bool, str]:
-    soup = BeautifulSoup(html_str, 'html.parser')
-    html_text = soup.text
-    
-    # 如果含 已签到
-    if "已签到" in html_text:
-        return True, "已签到"
+    """
+    解析签到结果。
+    :return: (是否成功, 结果文案或页面文本片段)
+    """
+    text = _page_text(html_str)
+    if not text:
+        return False, ""
 
-    # 提取 签到已得\d+的魔力值
-    sign_result_bonus = re.search(r'签到已得(\d+)', soup.text)
-    
-    if sign_result_bonus:
-        sign_value = sign_result_bonus.group(1)
-        success_msg = f"签到已得{sign_value}"
-        return True, success_msg
-    
-    result = re.search(
-            r'第(\d+)次\S+?已连续\S+?(\d+)天\S+?获得(\d+)', html_text)
+    for pattern, fmt in _ATTENDANCE_PATTERNS:
+        m = re.search(pattern, text)
+        if m:
+            msg = fmt(m)
+            logger.info(f"签到结果匹配：{msg}")
+            return True, msg
 
+    for word in _ALREADY_PATTERNS:
+        if word in text:
+            return True, "已签到"
 
-    if result:
-        sign_days = result.group(1)
-        sign_total_days = result.group(2)
-        sign_bonus = result.group(3)
-        
-        success_msg = f"第 {sign_days} 次签到，连续 {sign_total_days} 天，本次签到获得 {sign_bonus} 个魔力值"
-        return True, success_msg
-
-    # 使用列表推导式获取文本包含“本次签到获得”的父标签文本
-    results = [
-        re.sub(r'\s+', ' ', tag.parent.text.strip())
-        for tag in soup.find_all(string=re.compile("本次|这次"))
-    ]
-
-    if len(results) > 0:
-        sign_result = results[0]
-        # 提取上述内容，使用正则提取
-        result = re.search(
-            r'\S+\s(\d+)\s\S+\s(\d+)\s天\S+\s(\d+)\s', sign_result)
-        if result:
-            sign_count, continuous_sign_count, sign_value = result.groups()
-            success_msg = f"第 {sign_count} 次签到，连续 {continuous_sign_count} 天，本次签到获得 {sign_value} 个魔力值"
-            return True, success_msg
-        else:
-            # 正则当前日期, 例如2025-01-01
-            # 获取当前日期
-            result = re.search(datetime.now().strftime("%Y-%m-%d") + r".*?获得魔力值：(\d+).*?连续天数：(\d+).*", soup.text)
-            if result:
-                sign_value, continuous_sign_count = result.groups()
-                success_msg = f"本次签到获得 {sign_value} 个魔力值，连续签到 {continuous_sign_count} 天"
-                return True, success_msg
-            else:
-                logger.warn(f"未找到签到结果：{sign_result}")
-        return False, soup.text
-    else:
-        # print("未找到签到结果")
-        return False, soup.text
+    # 没匹配到：把页面文本片段带回去，便于判断是改版还是文案变体
+    return False, text[:500]
 
 
 class AutoSignInEnhanced(_PluginBase):
@@ -2111,7 +2105,9 @@ class AutoSignInEnhanced(_PluginBase):
         if sign_result:
             logger.info(f"{site} 签到结果：{sign_msg}（{source}）")
             return True, sign_msg, KIND_OK
-        return False, fmt_failure(KIND_LAYOUT, "已登录但未匹配到签到结果，站点可能改版"), KIND_LAYOUT
+        snippet = re.sub(r"\s+", " ", (sign_msg or "")).strip()[:120]
+        logger.warning(f"{site} 已登录但未匹配到签到结果，页面文本片段：{snippet}")
+        return False, fmt_failure(KIND_LAYOUT, f"未匹配到签到结果，页面文本：{snippet}"), KIND_LAYOUT
 
     def __signin_base(self, site_info: CommentedMap) -> Tuple[bool, str, str]:
         """
