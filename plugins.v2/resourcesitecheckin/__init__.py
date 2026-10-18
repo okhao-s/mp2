@@ -26,7 +26,7 @@ class ResourceSiteCheckin(_PluginBase):
     plugin_name = "资源站签到"
     plugin_desc = "资源站（聚影等）自动签到，支持普通签到 / 幸运签到、CF 盾兜底、签到状态查询。"
     plugin_icon = "fruit.png"
-    plugin_version = "1.0"
+    plugin_version = "1.1"
     plugin_author = "okhao"
     author_url = "https://github.com/okhao-s/mp2"
     plugin_config_prefix = "resourcesitecheckin_"
@@ -201,15 +201,21 @@ class ResourceSiteCheckin(_PluginBase):
         }
 
     def get_page(self) -> List[dict]:
-        text = self._last_result or (self.get_data("last_result") or "还没有运行记录")
+        """数据页：任何异常都不向外抛，否则前端会显示「插件数据加载失败」"""
+        try:
+            text = self._last_result or (self.get_data("last_result") or "还没有运行记录")
+            last_time = self.get_data("last_time") or "-"
+        except Exception as e:
+            logger.warning(f"资源站签到：读取数据页失败 {e}")
+            text, last_time = f"读取插件数据失败：{e}", "-"
         return [{
             "component": "VRow",
             "content": [{
                 "component": "VCol", "props": {"cols": 12},
                 "content": [{"component": "VAlert", "props": {
                     "type": "info", "variant": "tonal",
-                    "title": f"最近一次签到：{self.get_data('last_time') or '-'}",
-                    "text": text}}],
+                    "title": f"最近一次签到：{last_time}",
+                    "text": str(text)}}],
             }],
         }]
 

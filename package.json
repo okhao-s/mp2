@@ -34,12 +34,13 @@
         "name": "资源站签到",
         "description": "资源站（聚影等）自动签到，支持普通/幸运签到、CF 盾兜底、token 自动续期。",
         "labels": "签到",
-        "version": "1.0",
+        "version": "1.1",
         "icon": "https://raw.githubusercontent.com/okhao-s/mp2/main/icons/fruit.png",
         "author": "okhao",
         "level": 1,
         "v2": true,
         "history": {
+            "v1.1": "数据页容错：读取失败不再抛异常（修复「插件数据加载失败」）",
             "v1.0": "初始版本：登录拿 token、查询签到状态、普通签到、幸运签到、CF 盾 FlareSolverr 兜底"
         }
     }
