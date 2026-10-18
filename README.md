@@ -100,3 +100,14 @@ python3 tests/test_signin.py    # 用桩模块替换 MoviePilot 运行时，17 �
 鉴权：请求头 `X-App-User-Token`，POST 另带 `X-CSRFToken`（来自 `csrftoken` cookie）。
 
 测试：`python3 tests/test_resourcesitecheckin.py`（13 项断言：普通/幸运签到、已签到跳过、token 失效重登、密码错误、CF 解盾）
+
+#### v0.8：数据页「重试失败站点」
+
+签到打卡记录页右上角新增按钮，点一下重签**今天失败**的站点（`失败` / `Cookie已失效`）：
+
+- 失败站点 ≤3 个：同步执行，弹窗关闭后直接看到更新后的状态
+- 失败站点 >3 个：转后台并发重试（并发数沿用插件配置），接口立即返回，完成后推送一条汇总通知；稍后刷新数据页即可看到结果
+- 重试时不再叠加随机抖动，避免按钮等太久；成功的站点不会被重复请求
+- 接口：`GET /plugin/AutoSignInEnhanced/retry_failed?apikey=...`（页面按钮已带 apikey）
+
+测试：`tests/test_autosignin_retry.py`（14 项：只重试失败站点、状态回写、通知、后台路径）

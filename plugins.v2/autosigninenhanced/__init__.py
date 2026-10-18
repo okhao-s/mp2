@@ -1,6 +1,7 @@
 import os
 import random
 import re
+import threading
 import time
 import traceback
 from datetime import datetime, timedelta
@@ -278,6 +279,12 @@ class AutoSignInEnhanced(_PluginBase):
             "methods": ["GET"],
             "summary": "站点签到",
             "description": "使用站点域名签到站点",
+        }, {
+            "path": "/retry_failed",
+            "endpoint": self.retry_failed,
+            "methods": ["GET"],
+            "summary": "重试失败站点",
+            "description": "重新签到今天失败的站点（登录失效/盾未过/网络超时等）",
         }]
 
     def get_service(self) -> List[Dict[str, Any]]:
@@ -1296,6 +1303,24 @@ class AutoSignInEnhanced(_PluginBase):
                                         'component': 'VSpacer'
                                     },
                                     {
+                                        'component': 'VBtn',
+                                        'props': {
+                                            'color': 'warning',
+                                            'size': 'small',
+                                            'variant': 'tonal',
+                                            'class': 'ml-2',
+                                            'prepend-icon': 'mdi-refresh'
+                                        },
+                                        'text': '重试失败站点',
+                                        'events': {
+                                            'click': {
+                                                'api': f'plugin/AutoSignInEnhanced/retry_failed?apikey={settings.API_TOKEN}',
+                                                'method': 'get',
+                                                'params': {}
+                                            }
+                                        }
+                                    },
+                                    {
                                         'component': 'VChip',
                                         'props': {
                                             'color': 'light-blue-lighten-5',
@@ -2006,6 +2031,86 @@ class AutoSignInEnhanced(_PluginBase):
             except Exception as e:
                 logger.error("站点模块加载失败：%s" % str(e))
         return None
+
+    @staticmethod
+    def _record_status(msg: str) -> str:
+        """把签到返回文案归类成记录里的 status（与 __do 的归类保持一致）"""
+        msg = str(msg or "")
+        if "Cookie" in msg:
+            return "Cookie已失效"
+        if "失败" in msg or "错误" in msg:
+            return "失败"
+        if "已签到" in msg:
+            return "已签到"
+        if "登录成功" in msg:
+            return "登录成功"
+        if "签到" in msg and ("得" in msg or "第" in msg):
+            return "签到成功"
+        if "成功" in msg:
+            return "成功"
+        return msg[:20]
+
+    def retry_failed(self) -> schemas.Response:
+        """
+        重试今天失败的站点（数据页「重试失败站点」按钮调用）
+        """
+        today = datetime.now()
+        key = f"{today.month}月{today.day}日"
+        records = self.get_data(key) or []
+        if not isinstance(records, list):
+            records = [records]
+
+        failed = [r for r in records if isinstance(r, dict) and
+                  ("失败" in str(r.get("status", "")) or "Cookie" in str(r.get("status", "")))]
+        if not failed:
+            return schemas.Response(success=True, message="今天没有失败的站点")
+
+        all_sites = [site for site in SitesHelper().get_indexers() if not site.get("public")] + self.__custom_sites()
+        by_name = {site.get("name"): site for site in all_sites}
+        targets = [(r, by_name.get(r.get("site"))) for r in failed]
+        targets = [(r, site) for r, site in targets if site]
+        if not targets:
+            return schemas.Response(success=False, message="找不到失败站点对应的站点配置")
+
+        # 站点多时放后台，避免前端请求超时；少时同步返回结果
+        if len(targets) > 3:
+            threading.Thread(target=self.__run_retry, args=(key, records, targets), daemon=True).start()
+            return schemas.Response(success=True,
+                                    message=f"已开始后台重试 {len(targets)} 个站点，完成后会发通知，稍后刷新查看")
+
+        return self.__run_retry(key, records, targets)
+
+    def __run_retry(self, key: str, records: list, targets: list) -> schemas.Response:
+        """实际执行重试（同步/后台共用）"""
+        logger.info(f"开始重试 {len(targets)} 个失败站点 ...")
+        worker = max(1, min(len(targets), int(self._concurrency or 2)))
+        old_jitter = self._jitter
+        self._jitter = 0          # 重试不叠加随机延迟，避免按钮等待过久
+        try:
+            with ThreadPool(worker) as pool:
+                results = pool.map(self.signin_site, [site for _, site in targets])
+        finally:
+            self._jitter = old_jitter
+
+        fixed = 0
+        for (record, _site), (_name, message) in zip(targets, results):
+            record["status"] = self._record_status(message)
+            record["message"] = message
+            if "失败" not in record["status"] and "Cookie" not in record["status"]:
+                fixed += 1
+        self.save_data(key, records)
+
+        summary = f"重试完成：{fixed}/{len(targets)} 个成功"
+        logger.info(summary)
+        if self._notify:
+            try:
+                lines = [f"{r.get('site')}：{r.get('status')}" for r, _ in targets]
+                self.post_message(mtype=NotificationType.SiteMessage,
+                                  title="【站点自动签到】重试结果",
+                                  text=summary + "\n" + "\n".join(lines))
+            except Exception as e:
+                logger.warning(f"重试通知发送失败：{e}")
+        return schemas.Response(success=True, message=summary)
 
     def signin_by_domain(self, url: str, apikey: str) -> schemas.Response:
         """
