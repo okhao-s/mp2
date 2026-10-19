@@ -153,7 +153,7 @@ class AutoSignInEnhanced(_PluginBase):
     # 插件图标
     plugin_icon = "signin.png"
     # 插件版本
-    plugin_version = "2.9.1-Enhanced-v0.10"
+    plugin_version = "2.9.1-Enhanced-v0.11"
     # 插件作者
     plugin_author = "thsrite,cancelpt"
     # 作者主页
@@ -2109,6 +2109,13 @@ class AutoSignInEnhanced(_PluginBase):
         if not failed:
             return schemas.Response(success=True, message="今天没有失败的站点")
 
+        # 同一站点一天可能有多条失败记录，去重后再重试：
+        # 否则同一个站会被多个 worker 并发重复签到（观众就是这样被刷了 6 次）
+        uniq = {}
+        for r in failed:
+            uniq[str(r.get("site") or "")] = r
+        failed = [r for name, r in uniq.items() if name]
+
         all_sites = [site for site in SitesHelper().get_indexers() if not site.get("public")] + self.__custom_sites()
         by_name = {site.get("name"): site for site in all_sites}
         targets = [(r, by_name.get(r.get("site"))) for r in failed]
@@ -2439,11 +2446,15 @@ class AutoSignInEnhanced(_PluginBase):
         if render:
             logger.warning(f"{site} 尝试浏览器仿真兜底...")
             try:
-                page_source = PlaywrightHelper().get_page_source(url=checkin_url,
-                                                                 cookies=site_cookie,
-                                                                 ua=ua,
-                                                                 proxies=proxy_server,
-                                                                 timeout=timeout)
+                # 注意：get_page_source 在 BROWSER_EMULATION=flaresolverr 时只再走一次
+                # FlareSolverr，根本不开浏览器。action() 才是真浏览器（能跑 JS / 过 Turnstile）。
+                page_source = PlaywrightHelper().action(
+                    url=checkin_url,
+                    callback=lambda page: page.content(),
+                    cookies=site_cookie,
+                    ua=ua,
+                    headless=False,
+                    timeout=timeout)
             except Exception as e:
                 logger.warning(f"{site} 浏览器仿真异常：{e}")
                 page_source = None

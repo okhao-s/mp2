@@ -28,10 +28,9 @@ CF_MARKERS = (
     "sorry, you have been blocked",
     "ddos protection by cloudflare",
     "cf-error-details",
-    # CF 挑战平台与 Turnstile 专属标记（借自 codex-checkin 的 CHALLENGE_SELECTOR）
+    # CF 挑战平台专属标记。注意：不要用 turnstile 标记判断被盾——
+    # 正常签到页挂一个 Turnstile 组件也会命中，会把「需要人机验证」误判成 CF 拦截。
     "cdn-cgi/challenge-platform",
-    "challenges.cloudflare.com/turnstile",
-    "cf-turnstile-response",
     "cf_chl_prog",
 )
 

@@ -15,11 +15,12 @@
         "name": "站点自动签到增强",
         "description": "自动模拟登录、签到站点（CF 三层降级 + 失败分类重试）。",
         "labels": "站点",
-        "version": "2.9.1-Enhanced-v0.10",
+        "version": "2.9.1-Enhanced-v0.11",
         "icon": "signin.png",
         "author": "thsrite,cancelpt",
         "level": 2,
         "history": {
+            "v0.11": "观众（audiences.me）专用适配器：attendance.php 挂 Cloudflare Turnstile，必须用真浏览器等 token 再提交表单；同时修复「浏览器仿真」在 BROWSER_EMULATION=flaresolverr 时其实只重复调用 FlareSolverr 的问题（改用 PlaywrightHelper.action 真开浏览器）；重试失败站点去重，避免同一站被并发重复签到",
             "v0.10": "借鉴 codex-checkin：签到后权威回读（首读无文案时 4s/6s 再读两次，站点异步刷新不再误判待核验）；同域上游连续失败 2 次熔断本轮后续站点；CF 挑战标记补 Turnstile/challenge-platform；5xx/429 优先按状态码归类；debug 页面按内容哈希去重",
             "v0.9": "签到状态契约（移植 codex-bookmark-checkin-template）：状态/原因码统一；没有页面证据一律记「结果待核验」，不再误报「站点改版」；只重试可重试原因，结果不明禁止重放；每日回执账本 ledger/*.jsonl（自动脱敏）",
             "v0.8": "数据页新增「重试失败站点」按钮：一键重签今天失败的站点（≤3 个同步返回，更多走后台并发重试并推送结果）",
