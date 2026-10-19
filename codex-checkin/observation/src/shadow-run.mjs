@@ -1,0 +1,111 @@
+#!/usr/bin/env node
+
+import fs from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { buildSnapshot, writeSnapshot } from './bridge.mjs';
+import { appendLedgerRecord, createLedgerRecord } from './shadow-ledger.mjs';
+import {loadRuntimeConfig} from './runtime-config.mjs';
+import {commitDashboardGeneration} from './dashboard-generation.mjs';
+import {loadPtRecoveryDiagnostics} from './pt-reconciliation.mjs';
+
+function parseArgs(argv) {
+  const args = {};
+  for (let i = 2; i < argv.length; i += 1) {
+    const token = argv[i];
+    if (token === '--legacy-root') args.legacyRoot = argv[++i];
+    else if (token === '--out') args.out = argv[++i];
+    else if (token === '--ledger') args.ledger = argv[++i];
+    else if (token === '--previous') args.previous = argv[++i];
+    else if (token === '--generated-at') args.generatedAt = argv[++i];
+    else if (token === '--health-file') args.healthFile = argv[++i];
+    else if (token === '--pt-status-file') args.ptStatusFile = argv[++i];
+    else if (token === '--pt-status-cache-file') args.ptStatusCacheFile = argv[++i];
+    else if (token === '--pt-fallback-file') args.ptFallbackFile = argv[++i];
+    else if (token === '--monitor-catalog') args.monitorCatalog = argv[++i];
+    else if (token === '--identity-file') args.identityFile = argv[++i];
+    else if (token === '--desired-plan') args.desiredPlan = argv[++i];
+    else if (token === '--help' || token === '-h') args.help = true;
+    else throw new Error(`unknown argument: ${token}`);
+  }
+  return args;
+}
+
+function loadSnapshot(file) {
+  if (!file) return null;
+  if (!fs.existsSync(file)) throw new Error(`previous snapshot is missing: ${file}`);
+  try { return JSON.parse(fs.readFileSync(file, 'utf8')); }
+  catch (error) { throw new Error(`invalid previous snapshot: ${error.message}`); }
+}
+
+function loadJsonReport(file, label) {
+  if (!file) return undefined;
+  if (!fs.existsSync(file)) throw new Error(`${label} is missing: ${file}`);
+  try { return JSON.parse(fs.readFileSync(file, 'utf8')); }
+  catch (error) { throw new Error(`invalid ${label}: ${error.message}`); }
+}
+
+// Display-only fallback. Preserve original evidence times; this cache must
+// never authorize a Harvest fallback dispatch or a new site submission.
+export function loadSameDayHarvestCache(file, now = new Date()) {
+  if (!file) return undefined;
+  try {
+    const report = JSON.parse(fs.readFileSync(file, 'utf8'));
+    const observed = Date.parse(report.generatedAt);
+    const day = value => new Intl.DateTimeFormat('en-CA', {timeZone:'Asia/Shanghai'}).format(value);
+    if (report.source !== 'harvest' || report.schemaVersion !== 1 || !Array.isArray(report.sites) ||
+        !Number.isFinite(observed) || observed > now.getTime() + 60_000 ||
+        report.businessDate !== day(now) || day(new Date(observed)) !== day(now)) return undefined;
+    return report;
+  } catch { return undefined; }
+}
+
+if (process.argv[1] && path.resolve(process.argv[1]) === path.resolve(fileURLToPath(import.meta.url))) {
+  try {
+    const args = parseArgs(process.argv);
+    if (args.help) {
+      console.log('Usage: node src/shadow-run.mjs --legacy-root <path> [--out <file>] [--ledger <jsonl>] [--previous <snapshot>] [--health-file <json>] [--pt-status-file <json>]');
+      process.exit(0);
+    }
+    const legacyRoot = args.legacyRoot ?? process.env.CHECKIN_LEGACY_ROOT;
+    if (!legacyRoot) throw new Error('provide --legacy-root or CHECKIN_LEGACY_ROOT');
+    const projectRoot=path.resolve(path.dirname(fileURLToPath(import.meta.url)),'..');
+    const businessDate=new Intl.DateTimeFormat('en-CA',{timeZone:'Asia/Shanghai'}).format(new Date(args.generatedAt??Date.now()));
+    const automaticFallbackFile=path.join(projectRoot,'outputs',`pt-fallback-results-${businessDate}.json`);
+    const livePtReport = loadJsonReport(args.ptStatusFile, 'PT status report');
+    const cachedPtReport = livePtReport ? undefined : loadSameDayHarvestCache(args.ptStatusCacheFile, new Date(args.generatedAt??Date.now()));
+    const snapshot = buildSnapshot({
+      legacyRoot,
+      generatedAt: args.generatedAt,
+      healthReport: loadJsonReport(args.healthFile, 'health report'),
+      ptStatusReport: livePtReport ?? cachedPtReport,
+      ptFallbackReport: loadJsonReport(args.ptFallbackFile??(fs.existsSync(automaticFallbackFile)?automaticFallbackFile:null), 'PT fallback report'),
+      ptFallbackOnlyEnabled:loadRuntimeConfig(projectRoot).ptFallbackOnlyEnabled,
+      ptRecoveryReport:loadPtRecoveryDiagnostics(projectRoot,businessDate),
+      monitorCatalog: loadJsonReport(args.monitorCatalog, 'PT bookmark catalog'),
+      identityReport: loadJsonReport(args.identityFile, 'display identity observations'),
+      desiredPlan: loadJsonReport(args.desiredPlan,'desired task plan')
+    });
+    const previous = loadSnapshot(args.previous);
+    const record = createLedgerRecord(snapshot, { previousSnapshot: previous, recordedAt: args.generatedAt });
+    if (args.ledger) appendLedgerRecord(args.ledger, record, { legacyRoot });
+    // Commit the ledger before its snapshot: readers can retain the prior
+    // complete generation until the atomic snapshot rename succeeds.
+    if (args.out) writeSnapshot(snapshot, args.out, legacyRoot);
+    if(args.out&&args.ledger)commitDashboardGeneration({snapshot,snapshotFile:args.out,ledgerFile:args.ledger});
+    console.log(JSON.stringify({
+      snapshotId: snapshot.snapshotId,
+      planHash: snapshot.planHash,
+      classification: record.drift.classification,
+      logicalSites: snapshot.counts.logicalSites,
+      executionUnits: snapshot.counts.executionUnits,
+      mode: snapshot.mode,
+      ptStatusCached: Boolean(cachedPtReport),
+      output: args.out ? path.resolve(args.out) : null,
+      ledger: args.ledger ? path.resolve(args.ledger) : null
+    }, null, 2));
+  } catch (error) {
+    console.error(`shadow run error: ${error.message}`);
+    process.exitCode = 1;
+  }
+}

@@ -1,0 +1,103 @@
+import datetime
+import importlib.util
+from pathlib import Path
+import sqlite3
+import tempfile
+import unittest
+from unittest.mock import patch
+
+spec = importlib.util.spec_from_file_location("harvest_observe", Path(__file__).parents[1] / "scripts" / "harvest-observe.py")
+observer = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(observer)
+
+class HarvestEvidenceTest(unittest.TestCase):
+    def test_success_requires_explicit_positive_evidence(self):
+        self.assertEqual(observer.classify('签到成功 这是第 1 次'), 'signed')
+        self.assertEqual(observer.classify('已签到，请勿重复操作'), 'already_signed')
+        self.assertEqual(observer.classify('您今天已经在其他地方签到了哦！'), 'already_signed')
+        self.assertEqual(observer.classify('成功,已连续签到81天,魔力值加170'), 'signed')
+        self.assertEqual(observer.classify('今日签到排名：1 / 1 这是您的第209次签到，已连续签到209天，本次签到获得1000个'), 'signed')
+        self.assertEqual(observer.classify('未签到'), 'not_signed')
+        self.assertEqual(observer.classify('签到失败'), 'failed')
+        for text in ['HTTP 200', '抓取成功', '请求超时', '']:
+            self.assertEqual(observer.classify(text), 'unknown')
+
+    def test_only_current_day_explicit_failure_is_an_observed_failure(self):
+        shanghai = datetime.timezone(datetime.timedelta(hours=8))
+        now = datetime.datetime(2026, 9, 20, 9, 0, tzinfo=shanghai)
+        with tempfile.TemporaryDirectory() as folder:
+            database = Path(folder) / 'harvest.sqlite'
+            conn = sqlite3.connect(database)
+            conn.execute('CREATE TABLE mysite_mysite(mirror TEXT, nickname TEXT, user_id TEXT, username TEXT, sign_info TEXT)')
+            conn.execute('CREATE TABLE harvest_schedule_task(task TEXT, enabled INTEGER)')
+            conn.execute('CREATE TABLE harvest_schedule_result(id INTEGER, task_name TEXT, status TEXT, date_created TEXT, date_done TEXT)')
+            conn.execute('INSERT INTO harvest_schedule_task VALUES(?,?)', ('自动签到任务', 1))
+            conn.execute('INSERT INTO harvest_schedule_result VALUES(?,?,?,?,?)', (5, '自动签到任务', 'SUCCESS', '2026-09-20T08:00:00+08:00', '2026-09-20T08:01:00+08:00'))
+            for origin, status, day in [('https://failed.example', '签到失败', '2026-09-20'),
+                                        ('https://old.example', '未签到', '2026-09-19'),
+                                        ('https://absent.example', '请求超时', '2026-09-20')]:
+                record = {day: {'message': status, 'created_at': f'{day}T08:00:00+08:00'}}
+                conn.execute('INSERT INTO mysite_mysite VALUES(?,?,?,?,?)', (origin, 'fixture', '7', 'fixture', observer.json.dumps(record)))
+            conn.commit()
+            conn.close()
+            with patch.object(observer, 'ZoneInfo', return_value=shanghai):
+                result = observer.export(str(database), now=now)
+        statuses = {item['origin']: item for item in result['sites']}
+        self.assertEqual(statuses['https://failed.example']['status'], 'failed')
+        self.assertFalse(statuses['https://failed.example']['evidence']['authoritative'])
+        self.assertEqual(statuses['https://old.example']['status'], 'unknown')
+        self.assertEqual(statuses['https://absent.example']['status'], 'unknown')
+        self.assertEqual(result['taskCompletion']['status'], 'completed')
+        self.assertEqual(result['taskCompletion']['resultId'], 5)
+        self.assertFalse(result['checkinInventoryComplete'])
+
+    def test_live_site_switches_are_exported_without_account_credentials(self):
+        shanghai = datetime.timezone(datetime.timedelta(hours=8))
+        now = datetime.datetime(2026, 10, 2, 9, 0, tzinfo=shanghai)
+        with tempfile.TemporaryDirectory() as folder:
+            database = Path(folder) / 'harvest.sqlite'
+            conn = sqlite3.connect(database)
+            conn.execute('CREATE TABLE mysite_mysite(mirror TEXT,nickname TEXT,user_id TEXT,username TEXT,sign_info TEXT,available INTEGER,sign_in INTEGER)')
+            for origin, available, enabled in [('https://managed.example', 1, 1), ('https://disabled.example', 1, 0), ('https://unavailable.example', 0, 1)]:
+                conn.execute('INSERT INTO mysite_mysite VALUES(?,?,?,?,?,?,?)', (origin, 'fixture', '7', 'fixture', '{}', available, enabled))
+            conn.commit(); conn.close()
+            with patch.object(observer, 'ZoneInfo', return_value=shanghai):
+                result = observer.export(str(database), now=now)
+        self.assertTrue(result['checkinInventoryComplete'])
+        self.assertEqual([s['checkinEnabled'] for s in result['sites']], [True, False, False])
+        self.assertIsNone(result['taskCompletion'])
+
+class HarvestActivityTests(unittest.TestCase):
+    def setUp(self):
+        self.db = sqlite3.connect(":memory:")
+        self.db.execute("CREATE TABLE harvest_schedule_task(task TEXT,enabled INTEGER)")
+        self.db.execute("CREATE TABLE harvest_schedule_result(id INTEGER,status TEXT,date_created TEXT,date_done TEXT,task_name TEXT)")
+        self.db.execute("INSERT INTO harvest_schedule_task VALUES ('每日签到',1)")
+        self.db.execute("INSERT INTO harvest_schedule_result VALUES (3,'SUCCESS','2026-09-30T09:00:00+08:00','2026-09-30T09:10:00+08:00','每日签到')")
+        shanghai = datetime.timezone(datetime.timedelta(hours=8))
+        self.timezone_patch = patch.object(observer, "ZoneInfo", return_value=shanghai)
+        self.timezone_patch.start()
+        self.now = datetime.datetime(2026,9,30,10,tzinfo=shanghai)
+    def tearDown(self):
+        self.db.close()
+        self.timezone_patch.stop()
+    def result(self):
+        return observer.completed_daily_task(self.db,self.now,"2026-09-30")
+    def test_completed(self):
+        self.assertEqual(self.result()["status"],"completed")
+        self.assertEqual(self.result()["activeTaskCount"],0)
+    def test_older_concurrent_task_blocks_newer_success(self):
+        self.db.execute("INSERT INTO harvest_schedule_result VALUES (2,'STARTED','2026-09-30T08:00:00+08:00',NULL,'每日签到')")
+        self.assertEqual(self.result()["status"],"running")
+    def test_new_pending_task_blocks_previous_success(self):
+        self.db.execute("INSERT INTO harvest_schedule_result VALUES (4,'PENDING','2026-09-30T09:30:00+08:00',NULL,'每日签到')")
+        self.assertEqual(self.result()["status"],"running")
+    def test_unrelated_task_does_not_block(self):
+        self.db.execute("INSERT INTO harvest_schedule_result VALUES (4,'PENDING','2026-09-30T09:30:00+08:00',NULL,'下载任务')")
+        self.assertEqual(self.result()["status"],"completed")
+    def test_ambiguous_schedule_is_unknown(self):
+        self.db.execute("INSERT INTO harvest_schedule_task VALUES ('另一签到',1)")
+        self.assertIsNone(self.result())
+
+if __name__ == "__main__":
+    unittest.main()

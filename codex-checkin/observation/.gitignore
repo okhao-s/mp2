@@ -1,0 +1,26 @@
+node_modules/
+.env
+.env.*
+!.env.example
+config/config.local.json
+config/*.local.json
+work/
+outputs/
+logs/
+# Only this reviewed synthetic receipt is source data; all real logs stay ignored.
+!tests/fixtures/legacy/logs/
+tests/fixtures/legacy/logs/*
+!tests/fixtures/legacy/logs/fixture-run-20260902/
+tests/fixtures/legacy/logs/fixture-run-20260902/*
+!tests/fixtures/legacy/logs/fixture-run-20260902/result.json
+tmp/
+data/
+*.log
+*.tmp
+*.bak
+coverage/
+__pycache__/
+secrets/*.txt
+nas-data/*
+!nas-data/README.md
+!nas-data/.gitkeep

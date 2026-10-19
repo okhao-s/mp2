@@ -1,0 +1,149 @@
+{
+  "_meta": {
+    "schemaVersion": 1,
+    "lastVerifiedAt": "2026-08-09"
+  },
+  "relatedCandidateUrls": {
+    "https://x666.me": ["https://up.x666.me/"],
+    "https://checkin.new-api.abrdns.com": ["https://checkin.new-api.abrdns.com/checkin"],
+    "https://free.lyclaude.site": ["https://free.lyclaude.site/console/personal"],
+    "https://new-api.koyeb.app": ["https://new-api.koyeb.app/console/personal"],
+    "https://new-api.abrdns.com": ["https://checkin.new-api.abrdns.com/checkin"]
+  },
+  "logicalCheckinGroups": {
+    "https://checkin.new-api.abrdns.com": "abrdns-welfare",
+    "https://new-api.abrdns.com": "abrdns-welfare"
+  },
+  "newApiCheckinOrigins": [
+    "https://ai-cf.ailinyu.de",
+    "https://checkin.new-api.abrdns.com",
+    "https://elysia.h-e.top",
+    "https://free.lyclaude.site",
+    "https://jianzhile.vip",
+    "https://muyuan.do",
+    "https://new-api.abrdns.com",
+    "https://new-api.koyeb.app",
+    "https://rrrapi.com",
+    "https://token.fourj.space"
+  ],
+  "extendedDiscoveryOrigins": [
+    "https://ai-cf.ailinyu.de",
+    "https://checkin.new-api.abrdns.com",
+    "https://free.lyclaude.site",
+    "https://jianzhile.vip",
+    "https://muyuan.do",
+    "https://new-api.abrdns.com",
+    "https://new-api.koyeb.app",
+    "https://rrrapi.com",
+    "https://token.fourj.space"
+  ],
+  "autoDetectOAuthOrigins": [
+    "https://free.lyclaude.site",
+    "https://new-api.koyeb.app"
+  ],
+  "loginAsCheckinOrigins": [],
+  "newApiCaptchaRules": {
+    "https://jianzhile.vip": {
+      "checkinPath": "/api/user/checkin",
+      "captchaPath": "/api/user/checkin/captcha",
+      "maxAttempts": 6
+    }
+  },
+  "newApiSignInRules": {
+    "https://anyrouter.top": {
+      "signInPath": "/api/user/sign_in",
+      "selfPath": "/api/user/self",
+      "statusPath": "/api/status",
+      "logPath": "/api/log/self",
+      "logType": 4,
+      "responseSuccessText": "签到成功，获得",
+      "logSuccessText": "每日签到成功，增加额度",
+      "rewardAmount": 25,
+      "emptySuccessMeansAlreadySigned": true,
+      "userStorageKeys": ["user"]
+    }
+  },
+  "oauthReloginCheckinRules": {
+    "https://agentrouter.org": {
+      "forceLogout": false,
+      "nativeBrowser": true,
+      "selfPath": "/api/user/self",
+      "logoutPagePath": "/console",
+      "logoutPath": "/api/user/logout",
+      "logoutLabel": "退出",
+      "logPagePath": "/console/log",
+      "logPath": "/api/log/self",
+      "logType": 4,
+      "successText": "每日签到成功，增加额度",
+      "rewardAmount": 25,
+      "verificationWaitMs": 12000
+    }
+  },
+  "autoClickTurnstileOrigins": [
+    "https://bmapi.020212.xyz",
+    "https://muyuan.do"
+  ],
+  "knownNoCheckinFeatureOrigins": [
+    "https://ai-cf.ailinyu.de",
+    "https://conduit.ozdoev.net",
+    "https://rrrapi.com",
+    "https://token.fourj.space"
+  ],
+  "disabledCheckinOrigins": [
+    "https://new.bxacc.xyz"
+  ],
+  "visitCheckinRules": {},
+  "nativeWafPreflightUrls": [
+    { "url": "https://piggo.me/attendance.php", "waitSeconds": 120, "passiveOnly": true, "trustAsSigned": false, "automationUserDataDir": "data/sites/piggo/chrome-user-data" },
+    { "url": "https://www.hdkyl.in/attendance.php", "waitSeconds": 90, "passiveOnly": true, "trustAsSigned": false, "windowMode": "minimized" },
+    { "url": "https://ubits.club/attendance.php", "waitSeconds": 120, "passiveOnly": true }
+  ],
+  "nativeAccessibilityCheckinOrigins": [
+    "https://piggo.me",
+    "https://www.hdkyl.in"
+  ],
+  "nativeChallengePreflight": [
+    { "url": "https://audiences.me/attendance.php", "waitSeconds": 90, "action": "checkin" },
+    { "url": "https://ourbits.club/attendance.php", "waitSeconds": 120, "action": "checkin" },
+    { "url": "https://bmapi.020212.xyz/dashboard", "waitSeconds": 90, "action": "checkin" },
+    { "url": "https://muyuan.do/console", "waitSeconds": 90, "passiveOnly": true }
+  ],
+  "oauthRedirectOverrides": {
+    "https://free.lyclaude.site": {
+      "LinuxDO": "https://free.lyclaude.site/oauth/linuxdo"
+    },
+    "https://new-api.koyeb.app": {
+      "LinuxDO": "https://new-api.koyeb.app/api/oauth/linuxdo"
+    }
+  },
+  "oauthRecoveryTargetOrigins": {
+    "https://x666.me": "https://up.x666.me"
+  },
+  "oauthLoginUrls": {
+    "https://agentrouter.org": "https://agentrouter.org/login",
+    "https://checkin.new-api.abrdns.com": "https://checkin.new-api.abrdns.com/",
+    "https://elysia.h-e.top": "https://elysia.h-e.top/sign-in",
+    "https://free.lyclaude.site": "https://free.lyclaude.site/login",
+    "https://new-api.koyeb.app": "https://new-api.koyeb.app/login",
+    "https://up.x666.me": "https://up.x666.me/api/auth/login"
+  },
+  "oauthApiCheckinRules": {
+    "https://up.x666.me": {
+      "statusPath": "/api/checkin/status",
+      "actionPath": "/api/checkin/spin"
+    }
+  },
+  "automaticOAuthProviders": {
+    "https://agentrouter.org": "LinuxDO",
+    "https://muyuan.do": "LinuxDO",
+    "https://checkin.new-api.abrdns.com": "LinuxDO",
+    "https://elysia.h-e.top": "LinuxDO",
+    "https://free.lyclaude.site": "LinuxDO",
+    "https://new-api.koyeb.app": "LinuxDO",
+    "https://x666.me": "LinuxDO"
+  },
+  "attentionPreferredOrigins": [
+    "https://audiences.me",
+    "https://jianzhile.vip"
+  ]
+}

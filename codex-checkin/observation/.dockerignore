@@ -1,0 +1,14 @@
+.git
+.gitignore
+outputs
+logs
+tmp
+work
+backups
+.staging
+tests
+schemas
+docs
+secrets
+*.md
+*.jsonl
