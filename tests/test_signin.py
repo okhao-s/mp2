@@ -64,6 +64,11 @@ class SiteHandler(BaseHTTPRequestHandler):
                 body, code = (NORESULT_PAGE if n <= 2 else OK_PAGE), 200
             elif mode == "down":
                 body, code = "服务暂时不可用", 503
+            elif mode == "fake_success":
+                if "action=signin" in self.path:
+                    body, code = OK_PAGE, 200
+                else:
+                    body, code = FAKE_SUCCESS_PAGE, 200
             elif mode == "action":
                 if "action=signin" in self.path:
                     body, code = OK_PAGE, 200
@@ -89,6 +94,9 @@ class SiteHandler(BaseHTTPRequestHandler):
             with STATE["lock"]:
                 STATE["in_flight"] -= 1
 
+
+FAKE_SUCCESS_PAGE = """<html><body><div>签到成功，获得 10 个魔力值</div>
+<a href="/attendance.php?action=signin">签到</a></body></html>"""
 
 ACTION_PAGE = """<html><body><div>今日还未签到，签到可获得 10 个魔力值</div>
 <a href="/attendance.php?action=signin">签到</a></body></html>"""
@@ -314,6 +322,14 @@ def main():
     check("场景10 提示文案不算成功", "可获得" not in msg or "签到已得" in msg, msg[:50])
     check("场景10 跟随签到动作后成功", "签到已得" in msg, msg[:60])
     check("场景10 访问了动作地址", any("action=signin" in h[1] for h in STATE["hits"]),
+          f"{[h[1] for h in STATE['hits']][:4]}")
+
+    # ---------- 场景 11：页面写「签到成功」但仍挂着签到入口 → 不能信 ----------
+    reset(mode="fake_success")
+    p = make_plugin(_retry_times=0)
+    name, msg = p.signin_site(site_info())
+    check("场景11 不把说明文案当回执", "签到已得" in msg, msg[:60])
+    check("场景11 真的执行了签到动作", any("action=signin" in h[1] for h in STATE["hits"]),
           f"{[h[1] for h in STATE['hits']][:4]}")
 
     # ---------- 汇总 ----------

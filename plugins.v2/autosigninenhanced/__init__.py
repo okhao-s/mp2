@@ -166,7 +166,7 @@ class AutoSignInEnhanced(_PluginBase):
     # 插件图标
     plugin_icon = "signin.png"
     # 插件版本
-    plugin_version = "2.9.1-Enhanced-v0.14"
+    plugin_version = "2.9.1-Enhanced-v0.15"
     # 插件作者
     plugin_author = "thsrite,cancelpt"
     # 作者主页
@@ -2470,6 +2470,13 @@ class AutoSignInEnhanced(_PluginBase):
             logger.info(f"{site} 签到页无响应，改访问首页：{site_url}")
             html, status, err = self.__http_get(site_url, cookie, req_ua, proxies, timeout)
         state, msg, kind = self.__judge(site, html, status, err, source="直连")
+        if state:
+            # 页面里还挂着可用的签到入口，说明「签到成功」只是说明文案（我堡就是这样），
+            # 真正的签到动作还没做，必须转浏览器点一次
+            act = self.__find_signin_action(html, checkin_url)
+            if act and not any(k in (msg or "") for k in ("已签到", "签到已得", "今天已经")):
+                logger.warning(f"{site} 页面仍存在签到入口（{act}），判定为未签到，转浏览器流程")
+                state, msg, kind = False, contract_message(CAUSE_NO_EVIDENCE, "页面仍有签到入口"), CAUSE_NO_EVIDENCE
         if not state and _norm_cause(kind) == CAUSE_NO_EVIDENCE:
             # 页面只给了表单/链接时，先访问真正的签到动作地址（NexusPHP: ?action=signin）
             action_url = self.__find_signin_action(html, checkin_url)
@@ -2534,8 +2541,10 @@ class AutoSignInEnhanced(_PluginBase):
             result = None
             for headless in (False, True):
                 try:
+                    # 入口用轻量页：action() 会死等 networkidle，直接开签到页会超时
+                    loader = re.sub(r"(https?://[^/]+).*", r"\1/robots.txt", checkin_url)
                     result = PlaywrightHelper().action(
-                        url=checkin_url,
+                        url=loader,
                         callback=lambda page: browser_run(page, checkin_url),
                         cookies=site_cookie,
                         ua=ua,

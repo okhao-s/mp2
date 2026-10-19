@@ -48,6 +48,9 @@ class FakePage:
             return True
         return None
 
+    def goto(self, url, *a, **kw):
+        return None
+
     def wait_for_load_state(self, *a, **kw):
         return None
 

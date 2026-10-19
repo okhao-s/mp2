@@ -21,6 +21,9 @@ class PlaywrightHelper:
             def content(self):
                 return self._html
 
+            def goto(self, url, *a, **kw):
+                return None
+
             def evaluate(self, expr, *a, **kw):
                 import re as _re
                 html = self._html or ""

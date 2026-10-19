@@ -185,6 +185,18 @@ def run(page, url: str) -> Dict[str, Any]:
     if m:
         origin = m.group(0)
 
+    # action() 只能等 networkidle，对带 Turnstile 的页永远等不到；
+    # 所以外面先用 robots.txt 之类的轻量页把浏览器开起来，这里自己导航到签到页。
+    try:
+        page.goto(url)
+    except Exception:
+        pass
+    try:
+        page.wait_for_load_state("domcontentloaded", timeout=30000)
+    except Exception:
+        pass
+    time.sleep(1.5)
+
     snap = _snapshot(page)
     state = classify_page(url, snap.get("title", ""), snap.get("bodyText", ""),
                           snap.get("hasPassword", False), snap.get("challenge", False))

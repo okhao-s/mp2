@@ -40,8 +40,9 @@ class Audiences(_ISiteSigninHandler):
         html = None
         for headless in (False, True):
             try:
+                # 入口用轻量页：action() 会死等 networkidle，直接开签到页会超时
                 html = PlaywrightHelper().action(
-                    url=url,
+                    url="https://audiences.me/robots.txt",
                     callback=self._submit_turnstile,
                     cookies=cookie,
                     ua=ua,
