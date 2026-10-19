@@ -15,11 +15,12 @@
         "name": "站点自动签到增强",
         "description": "自动模拟登录、签到站点（CF 三层降级 + 失败分类重试）。",
         "labels": "站点",
-        "version": "2.9.1-Enhanced-v0.15",
+        "version": "2.9.1-Enhanced-v0.16",
         "icon": "signin.png",
         "author": "thsrite,cancelpt",
         "level": 2,
         "history": {
+            "v0.16": "签到记录页每个站点后面新增「重试」按钮：单独重签该站（后台执行，完成后推送通知），不用再整批重试；登录记录面板不显示该按钮",
             "v0.15": "我堡误报根因：页面静态写死「签到成功，获得 10 个魔力值」，同时又挂着签到入口 —— 现在只要页面还有可用的签到入口（action=signin/签到链接），一律不认文本回执，跟进去真正执行签到；观众浏览器超时根因：MoviePilot 的 action() 死等 networkidle，Turnstile 页永远等不到 —— 改为先用 robots.txt 把浏览器开起来，再自己 goto 签到页（domcontentloaded）",
             "v0.14": "修复观众浏览器超时：action() 等 networkidle 的 15s 默认超时对带 Turnstile 的页太短，改为至少 90s，并在回调里显式重新进入 attendance.php；新增「清除今日记录」按钮（reset_today），用于修正被误判成成功的站点（我堡这类当天不会再重签）",
             "v0.13": "复刻 codex-checkin 的浏览器签到逻辑：新增 browser_checkin.py（页面分类 → 找签到按钮 → 点击 → 等人机验证/权威回读 → 出回执）。无回执时自动开真浏览器把签到按钮点下去，不再只读一次 HTML 就判失败；我堡这类「页面只显示提示文案」的站点会真正执行签到",

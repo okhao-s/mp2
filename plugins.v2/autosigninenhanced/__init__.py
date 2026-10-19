@@ -9,7 +9,7 @@ from datetime import datetime, timedelta
 from multiprocessing.dummy import Pool as ThreadPool
 from multiprocessing.pool import ThreadPool
 from typing import Any, List, Dict, Tuple, Optional
-from urllib.parse import urljoin
+from urllib.parse import quote, urljoin
 
 import pytz
 from app import schemas
@@ -166,7 +166,7 @@ class AutoSignInEnhanced(_PluginBase):
     # 插件图标
     plugin_icon = "signin.png"
     # 插件版本
-    plugin_version = "2.9.1-Enhanced-v0.15"
+    plugin_version = "2.9.1-Enhanced-v0.16"
     # 插件作者
     plugin_author = "thsrite,cancelpt"
     # 作者主页
@@ -335,6 +335,12 @@ class AutoSignInEnhanced(_PluginBase):
             "methods": ["GET"],
             "summary": "重试失败站点",
             "description": "重新签到今天失败的站点（登录失效/盾未过/网络超时等）",
+        }, {
+            "path": "/retry_site",
+            "endpoint": self.retry_site,
+            "methods": ["GET"],
+            "summary": "重试单个站点",
+            "description": "按站点名单独重试一次签到（记录页每个站点后面的重试按钮）",
         }, {
             "path": "/reset_today",
             "endpoint": self.reset_today,
@@ -1156,6 +1162,7 @@ class AutoSignInEnhanced(_PluginBase):
                     status_meta["panel_color"],
                     status_meta["icon"],
                     latest_status,
+                    show_retry=True,
                 ))
 
         # 创建登录折叠面板
@@ -1759,7 +1766,8 @@ class AutoSignInEnhanced(_PluginBase):
         return status_meta["sort"], -latest_ordinal, str(site_name)
 
     @classmethod
-    def _create_expansion_panel(cls, site_name, records, status_color, status_icon, latest_status):
+    def _create_expansion_panel(cls, site_name, records, status_color, status_icon, latest_status,
+                                show_retry=False):
         """创建站点折叠面板"""
         # 生成站点图标（使用站点名的首字母）
         site_initial = site_name[0].upper() if site_name else "?"
@@ -1846,6 +1854,24 @@ class AutoSignInEnhanced(_PluginBase):
                             {
                                 'component': 'VSpacer'
                             },
+                            *([{
+                                'component': 'VBtn',
+                                'props': {
+                                    'color': 'primary',
+                                    'size': 'x-small',
+                                    'variant': 'tonal',
+                                    'class': 'mr-2',
+                                    'prepend-icon': 'mdi-refresh'
+                                },
+                                'text': '重试',
+                                'events': {
+                                    'click': {
+                                        'api': f'plugin/AutoSignInEnhanced/retry_site?apikey={settings.API_TOKEN}&site={quote(str(site_name))}',
+                                        'method': 'get',
+                                        'params': {}
+                                    }
+                                }
+                            }] if show_retry else []),
                             {
                                 'component': 'VIcon',
                                 'props': {
@@ -2131,6 +2157,45 @@ class AutoSignInEnhanced(_PluginBase):
         if "成功" in msg:
             return "成功"
         return msg[:20]
+
+    def retry_site(self, site: str = "") -> schemas.Response:
+        """单独重试一个站点（记录页每个站点后面的按钮调用）。"""
+        name = str(site or "").strip()
+        if not name:
+            return schemas.Response(success=False, message="站点名不能为空")
+        all_sites = [s for s in SitesHelper().get_indexers() if not s.get("public")] + self.__custom_sites()
+        target = next((s for s in all_sites if str(s.get("name")) == name), None)
+        if not target:
+            return schemas.Response(success=False, message=f"找不到站点配置：{name}")
+        threading.Thread(target=self.__run_single_retry, args=(name, target), daemon=True).start()
+        return schemas.Response(success=True, message=f"已开始重试「{name}」，完成后会发通知，稍后刷新查看")
+
+    def __run_single_retry(self, name: str, site_info: CommentedMap) -> None:
+        """后台重试单个站点，并把今天的记录更新成最新结果。"""
+        try:
+            _, message = self.signin_site(site_info)
+        except Exception as e:
+            logger.error(f"{name} 单站重试异常：{e}")
+            return
+        status = self._record_status(message)
+        key = f"{datetime.now().month}月{datetime.now().day}日"
+        records = self.get_data(key) or []
+        if not isinstance(records, list):
+            records = [records]
+        # 覆盖该站今天的记录（保留其它站）
+        replaced = False
+        for i, r in enumerate(records):
+            if isinstance(r, dict) and str(r.get("site")) == name:
+                records[i] = {"site": name, "status": status, "message": message}
+                replaced = True
+        if not replaced:
+            records.append({"site": name, "status": status, "message": message})
+        self.save_data(key, records)
+        try:
+            self.post_message(title=f"【单站重试】{name}",
+                              text=f"状态：{status}\n{message}")
+        except Exception:
+            logger.debug("单站重试通知发送失败", exc_info=True)
 
     def reset_today(self) -> schemas.Response:
         """清空今天的签到记录，让下一次签到重新处理所有站点。
