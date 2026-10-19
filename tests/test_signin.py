@@ -168,6 +168,8 @@ def site_info(**over):
 
 
 def reset(**kw):
+    from app.helper.browser import PlaywrightHelper
+    PlaywrightHelper.canned_html = None
     STATE.update({"mode": "cf", "in_flight": 0, "max_in_flight": 0, "hits": []})
     STATE.update(kw)
     FLARE.update({"calls": 0, "solve_ok": True})

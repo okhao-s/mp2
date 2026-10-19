@@ -22,7 +22,20 @@ class PlaywrightHelper:
                 return self._html
 
             def evaluate(self, expr, *a, **kw):
-                return ""
+                import re as _re
+                html = self._html or ""
+                if "bodyText" in expr:
+                    text = _re.sub(r"<script.*?</script>|<style.*?</style>", " ", html, flags=_re.S | _re.I)
+                    text = _re.sub(r"<[^>]+>", " ", text)
+                    text = _re.sub(r"\s+", " ", text).strip()
+                    title = _re.search(r"<title>([^<]*)</title>", html, _re.I)
+                    return {"bodyText": text,
+                            "hasPassword": 'type="password"' in html.lower(),
+                            "challenge": "turnstile" in html.lower() or "captcha" in html.lower(),
+                            "title": title.group(1) if title else ""}
+                if "els.map" in expr:
+                    return []
+                return None
 
             def wait_for_load_state(self, *a, **kw):
                 return None

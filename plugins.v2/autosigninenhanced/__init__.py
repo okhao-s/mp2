@@ -32,6 +32,7 @@ from apscheduler.triggers.cron import CronTrigger
 from ruamel.yaml import CommentedMap
 from bs4 import BeautifulSoup
 
+from .browser_checkin import run as browser_run
 from .checkin_contract import (
     CAUSE_LOGIN_REQUIRED,
     CAUSE_MANAGED_CHALLENGE,
@@ -39,6 +40,9 @@ from .checkin_contract import (
     CAUSE_NO_EVIDENCE,
     CAUSE_RATE_LIMIT,
     CAUSE_SERVER_ERROR,
+    CAUSE_SITE_MAINTENANCE,
+    CAUSE_TWO_FACTOR,
+    CAUSE_UPSTREAM_UNAVAILABLE,
     STATUS_ALREADY,
     STATUS_SIGNED,
     STATUS_UNKNOWN,
@@ -162,7 +166,7 @@ class AutoSignInEnhanced(_PluginBase):
     # 插件图标
     plugin_icon = "signin.png"
     # 插件版本
-    plugin_version = "2.9.1-Enhanced-v0.12"
+    plugin_version = "2.9.1-Enhanced-v0.13"
     # 插件作者
     plugin_author = "thsrite,cancelpt"
     # 作者主页
@@ -227,6 +231,7 @@ class AutoSignInEnhanced(_PluginBase):
             self._concurrency = max(1, _int_or(config.get("concurrency"), 2))
             self._jitter = max(0, _int_or(config.get("jitter"), 3))
             # 上游熔断：同一域名连续失败 2 次，本轮其余站点直接跳过
+            self._browser_fallback = True
             self._breaker_lock = threading.Lock()
             self._upstream_fail = {}
             self._retry_times = max(0, _int_or(config.get("retry_times"), 2))
@@ -2217,6 +2222,8 @@ class AutoSignInEnhanced(_PluginBase):
         state, message, cause = self.__signin_base(site_info)
         return state, message, _norm_cause(cause)
 
+    _browser_fallback = True
+
     def _breaker_state(self):
         lock = getattr(self, "_breaker_lock", None)
         if lock is None:
@@ -2452,7 +2459,10 @@ class AutoSignInEnhanced(_PluginBase):
             store.invalidate(domain)
         if kind == KIND_NETWORK:
             return state, msg, kind
-        if kind != KIND_SHIELD and not render:
+        # 只有「页面读到了但没有回执」才值得开浏览器；网络/5xx/登录失效直接返回，
+        # 否则每个故障站都要白等一次浏览器启动
+        browser_worthy = self._browser_fallback and _norm_cause(kind) == CAUSE_NO_EVIDENCE
+        if kind != KIND_SHIELD and not render and not browser_worthy:
             return state, msg, kind
 
         # ---------- 第 2 层：FlareSolverr ----------
@@ -2478,32 +2488,49 @@ class AutoSignInEnhanced(_PluginBase):
             else:
                 logger.warning(f"{site} FlareSolverr 解盾失败（检查地址/代理/是否已启动）")
 
-        # ---------- 第 3 层：浏览器仿真 ----------
-        if render:
-            logger.warning(f"{site} 尝试浏览器仿真兜底...")
-            try:
-                # 注意：get_page_source 在 BROWSER_EMULATION=flaresolverr 时只再走一次
-                # FlareSolverr，根本不开浏览器。action() 才是真浏览器（能跑 JS / 过 Turnstile）。
-                page_source = PlaywrightHelper().action(
-                    url=checkin_url,
-                    callback=lambda page: page.content(),
-                    cookies=site_cookie,
-                    ua=ua,
-                    headless=False,
-                    timeout=timeout)
-            except Exception as e:
-                logger.warning(f"{site} 浏览器仿真异常：{e}")
-                page_source = None
-            if page_source:
-                if not SiteUtils.is_logged_in(page_source):
-                    if under_challenge(page_source) or is_challenge(page_source):
-                        return False, fmt_failure(KIND_SHIELD, "直连/FlareSolverr/浏览器仿真均未通过"), KIND_SHIELD
-                    return False, fmt_failure(KIND_LOGIN, "仿真登录失败，Cookie 已失效"), KIND_LOGIN
-                sign_result, sign_msg = check_attendance(page_source)
-                if sign_result:
-                    logger.info(f"{site} 签到结果：{sign_msg}（浏览器仿真）")
-                    return True, sign_msg, KIND_OK
-                return False, fmt_failure(KIND_LAYOUT, "仿真已登录但未匹配到签到结果"), KIND_LAYOUT
+        # ---------- 第 3 层：浏览器签到（点击 + 等人机验证 + 权威回读） ----------
+        # 移植自 codex-checkin 的签到流程：不是「取一次 HTML」，而是真在浏览器里
+        # 找到签到按钮点下去，再等页面出现回执。对只显示表单/提示文案的站点有效。
+        if render or self._browser_fallback:
+            logger.warning(f"{site} 进入浏览器签到流程（找按钮/等人机验证/回读）...")
+            result = None
+            for headless in (False, True):
+                try:
+                    result = PlaywrightHelper().action(
+                        url=checkin_url,
+                        callback=lambda page: browser_run(page, checkin_url),
+                        cookies=site_cookie,
+                        ua=ua,
+                        headless=headless,
+                        timeout=max(45, int(timeout or 30)),
+                    )
+                except Exception as e:
+                    logger.warning(f"{site} 浏览器签到异常（headless={headless}）：{e}")
+                    result = None
+                if result:
+                    break
+            if result:
+                status = str(result.get("status") or "")
+                evidence = str(result.get("evidence") or "")[:200]
+                clicked = result.get("clicked")
+                logger.info(f"{site} 浏览器签到判定：{status}"
+                            f"{'（已点击签到）' if clicked else ''}，证据：{evidence[:60]}")
+                if status in ("signed", "already_signed"):
+                    return True, (evidence or "已签到"), KIND_OK
+                if status == "login_required":
+                    return False, contract_message(CAUSE_LOGIN_REQUIRED, "Cookie 已失效"), KIND_LOGIN
+                if status in ("interactive_challenge", "managed_challenge"):
+                    return False, contract_message(CAUSE_MANAGED_CHALLENGE), KIND_SHIELD
+                if status == "needs_attention":
+                    return False, contract_message(CAUSE_TWO_FACTOR), CAUSE_TWO_FACTOR
+                cause = result.get("cause") or ""
+                if cause == CAUSE_RATE_LIMIT:
+                    return False, contract_message(CAUSE_RATE_LIMIT), CAUSE_RATE_LIMIT
+                if cause == CAUSE_SITE_MAINTENANCE:
+                    return False, contract_message(CAUSE_SITE_MAINTENANCE), CAUSE_SITE_MAINTENANCE
+                if cause == CAUSE_UPSTREAM_UNAVAILABLE:
+                    return False, contract_message(CAUSE_UPSTREAM_UNAVAILABLE), CAUSE_UPSTREAM_UNAVAILABLE
+                return False, contract_message(CAUSE_NO_EVIDENCE, evidence), CAUSE_NO_EVIDENCE
 
         return state, msg, kind
 
