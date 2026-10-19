@@ -28,6 +28,11 @@ CF_MARKERS = (
     "sorry, you have been blocked",
     "ddos protection by cloudflare",
     "cf-error-details",
+    # CF 挑战平台与 Turnstile 专属标记（借自 codex-checkin 的 CHALLENGE_SELECTOR）
+    "cdn-cgi/challenge-platform",
+    "challenges.cloudflare.com/turnstile",
+    "cf-turnstile-response",
+    "cf_chl_prog",
 )
 
 # 登录失效标记

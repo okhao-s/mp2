@@ -25,6 +25,7 @@ STATE = {
     "max_in_flight": 0,
     "hits": [],
     "lock": threading.Lock(),
+    "norez_count": 0,
 }
 
 CHALLENGE = """<!DOCTYPE html><html><head><title>Just a moment...</title></head>
@@ -55,6 +56,14 @@ class SiteHandler(BaseHTTPRequestHandler):
             mode = STATE["mode"]
             if mode == "norez":
                 body, code = NORESULT_PAGE, 200
+            elif mode == "norez_then_ok":
+                # 前 2 次返回「没有签到文案」，之后返回已签到：模拟站点状态异步刷新
+                with STATE["lock"]:
+                    STATE["norez_count"] += 1
+                    n = STATE["norez_count"]
+                body, code = (NORESULT_PAGE if n <= 2 else OK_PAGE), 200
+            elif mode == "down":
+                body, code = "服务暂时不可用", 503
             elif mode == "login":
                 body, code = LOGIN_PAGE, 200
             elif mode == "ok":
@@ -270,6 +279,22 @@ def main():
     check("场景7 消息带页面文本片段", "欢迎回来" in msg, msg[:80])
     saved = os.listdir(debug_dir) if os.path.isdir(debug_dir) else []
     check("场景7 原始页面已落盘", len(saved) == 1, f"{saved}")
+
+    # ---------- 场景 8：首读无文案、回读拿到回执 → 应判定成功 ----------
+    reset(mode="norez_then_ok")
+    STATE["norez_count"] = 0
+    p = make_plugin()
+    name, msg = p.signin_site(site_info())
+    check("场景8 回读拿到权威状态", "签到已得" in msg, msg[:60])
+    check("场景8 确实做了回读", len(STATE["hits"]) >= 2, f"请求 {len(STATE['hits'])} 次")
+
+    # ---------- 场景 9：同域上游连续失败 → 熔断跳过 ----------
+    reset(mode="down")
+    p = make_plugin(_concurrency=1, _retry_times=0)
+    outs = [p.signin_site(site_info(name=f"S{i}")) for i in range(3)]
+    check("场景9 首个站点正常尝试", "服务" not in outs[0][1] and "签到" in outs[0][1] or "503" in outs[0][1] or "故障" in outs[0][1], outs[0][1][:50])
+    check("场景9 连续 2 次失败后熔断后续站点", "熔断" in outs[2][1],
+          f"{outs[1][1][:30]} / {outs[2][1][:30]}")
 
     # ---------- 汇总 ----------
     ok = sum(1 for _, c, _ in results if c)

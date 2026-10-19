@@ -153,7 +153,7 @@ class AutoSignInEnhanced(_PluginBase):
     # 插件图标
     plugin_icon = "signin.png"
     # 插件版本
-    plugin_version = "2.9.1-Enhanced-v0.9"
+    plugin_version = "2.9.1-Enhanced-v0.10"
     # 插件作者
     plugin_author = "thsrite,cancelpt"
     # 作者主页
@@ -217,6 +217,9 @@ class AutoSignInEnhanced(_PluginBase):
             self._flare_proxy = (config.get("flare_proxy") or "").strip()
             self._concurrency = max(1, _int_or(config.get("concurrency"), 2))
             self._jitter = max(0, _int_or(config.get("jitter"), 3))
+            # 上游熔断：同一域名连续失败 2 次，本轮其余站点直接跳过
+            self._breaker_lock = threading.Lock()
+            self._upstream_fail = {}
             self._retry_times = max(0, _int_or(config.get("retry_times"), 2))
             self._clearance_ttl = _int_or(config.get("clearance_ttl"), 1800)
 
@@ -1913,6 +1916,8 @@ class AutoSignInEnhanced(_PluginBase):
 
         # 执行签到（并发受限 + 每站随机抖动，避免同时登录触发风控）
         logger.info(f"开始执行{type_str}任务，并发 {self._concurrency}，抖动 0~{self._jitter}s ...")
+        if type_str == "签到":
+            self._breaker_reset()
         worker_cnt = max(1, min(len(do_sites), int(self._concurrency or 2)))
         if type_str == "签到":
             with ThreadPool(worker_cnt) as p:
@@ -2196,11 +2201,42 @@ class AutoSignInEnhanced(_PluginBase):
         state, message, cause = self.__signin_base(site_info)
         return state, message, _norm_cause(cause)
 
+    def _breaker_state(self):
+        lock = getattr(self, "_breaker_lock", None)
+        if lock is None:
+            lock = threading.Lock()
+            self._breaker_lock = lock
+            self._upstream_fail = {}
+        return lock
+
+    def _breaker_open(self, domain: str) -> bool:
+        self._breaker_state()
+        with self._breaker_lock:
+            return self._upstream_fail.get(domain, 0) >= 2
+
+    def _breaker_note(self, domain: str, cause: str) -> None:
+        """上游类失败累加；其他原因（登录/待核验）不计入熔断。"""
+        if cause not in (CAUSE_NETWORK, CAUSE_SERVER_ERROR):
+            return
+        self._breaker_state()
+        with self._breaker_lock:
+            self._upstream_fail[domain] = self._upstream_fail.get(domain, 0) + 1
+
+    def _breaker_reset(self) -> None:
+        self._breaker_state()
+        with self._breaker_lock:
+            self._upstream_fail.clear()
+
     def signin_site(self, site_info: CommentedMap) -> Tuple[str, str]:
         """
         签到一个站点：每站随机抖动 + 失败分类 + 只对可重试原因自动重试（结果不明绝不重放）
         """
         site_name = site_info.get("name")
+        domain = StringUtils.get_url_domain(site_info.get('url'))
+        if self._breaker_open(domain):
+            msg = "上游连续不可用，本轮已熔断跳过（下一轮再试）"
+            logger.warning(f"{site_name} {msg}")
+            return site_name, msg
         if self._jitter:
             time.sleep(random.uniform(0, float(self._jitter)))
         attempts = max(1, int(self._retry_times or 0) + 1)
@@ -2218,7 +2254,7 @@ class AutoSignInEnhanced(_PluginBase):
                                f"{backoff:.0f}s 后重试（第 {i + 1}/{attempts - 1} 次）")
                 time.sleep(backoff)
         seconds = (datetime.now() - start_time).seconds
-        domain = StringUtils.get_url_domain(site_info.get('url'))
+        self._breaker_note(domain, cause)
         if state:
             SiteOper().success(domain=domain, seconds=seconds)
         else:
@@ -2253,7 +2289,12 @@ class AutoSignInEnhanced(_PluginBase):
             base = os.path.join(str(self.get_data_path()), "debug")
             os.makedirs(base, exist_ok=True)
             safe = re.sub(r"[^\w.-]", "_", str(site or "site"))
-            fp = os.path.join(base, f"{safe}-{datetime.now().strftime('%Y%m%d-%H%M%S')}.html")
+            # 按内容哈希命名：同一页面多次回读只留一份，避免刷屏
+            import hashlib
+            digest = hashlib.md5(html.encode("utf-8", "ignore")).hexdigest()[:8]
+            fp = os.path.join(base, f"{safe}-{digest}.html")
+            if os.path.exists(fp):
+                return fp
             with open(fp, "w", encoding="utf-8") as f:
                 f.write(html)
             files = sorted(glob.glob(os.path.join(base, "*.html")))
@@ -2279,20 +2320,21 @@ class AutoSignInEnhanced(_PluginBase):
         return res.text, res.status_code, None
 
     def __judge(self, site: str, html: Optional[str], status: Optional[int], err: Optional[str],
-                source: str = "") -> Tuple[bool, str, str]:
+                source: str = "", save_debug: bool = True) -> Tuple[bool, str, str]:
         """根据响应判断结果，返回 (是否成功, 消息, 原因码)。
 
         原则：没有页面证据就不算成功；结果不明归为「待核验」，不叫「站点改版」。
         """
         kind = cf_classify(html, status, err)
-        if kind == KIND_NETWORK:
-            return False, contract_message(CAUSE_NETWORK, err or ""), KIND_NETWORK
-        if kind == KIND_SHIELD:
-            return False, contract_message(CAUSE_MANAGED_CHALLENGE), KIND_SHIELD
+        # 先看 HTTP 状态码：5xx/429 要单独归类，不能被下面的「网络类」抢先吃掉
         if status and 500 <= int(status) < 600:
             return False, contract_message(CAUSE_SERVER_ERROR, f"HTTP {status}"), CAUSE_SERVER_ERROR
         if status == 429:
             return False, contract_message(CAUSE_RATE_LIMIT), CAUSE_RATE_LIMIT
+        if kind == KIND_NETWORK:
+            return False, contract_message(CAUSE_NETWORK, err or ""), KIND_NETWORK
+        if kind == KIND_SHIELD:
+            return False, contract_message(CAUSE_MANAGED_CHALLENGE), KIND_SHIELD
         if kind == KIND_LOGIN or not SiteUtils.is_logged_in(html or ""):
             return False, contract_message(CAUSE_LOGIN_REQUIRED, "Cookie 已失效"), KIND_LOGIN
         sign_result, sign_msg = check_attendance(html or "")
@@ -2301,7 +2343,7 @@ class AutoSignInEnhanced(_PluginBase):
             return True, sign_msg, KIND_OK
         # 无回执：保存页面片段便于核验，但绝不当成成功
         snippet = redact(sign_msg, 200)
-        saved = self._save_debug_html(site, html)
+        saved = self._save_debug_html(site, html) if save_debug else ""
         logger.warning(f"{site} 未取得今日签到证据（页面文本：{snippet}）")
         if saved:
             logger.warning(f"{site} 原始页面已保存：{saved}")
@@ -2348,6 +2390,18 @@ class AutoSignInEnhanced(_PluginBase):
             logger.info(f"{site} 签到页无响应，改访问首页：{site_url}")
             html, status, err = self.__http_get(site_url, cookie, req_ua, proxies, timeout)
         state, msg, kind = self.__judge(site, html, status, err, source="直连")
+        if not state and _norm_cause(kind) == CAUSE_NO_EVIDENCE:
+            # 站点状态常是异步刷新的：再回读两次，避免把「刚签完还没刷新」记成待核验
+            # （对应参考项目 waitForAuthoritativeCheckin 的权威回读）
+            for idx, wait_s in enumerate((4, 6)):
+                time.sleep(wait_s)
+                html2, status2, err2 = self.__http_get(checkin_url, cookie, req_ua, proxies, timeout)
+                if not html2:
+                    continue
+                state, msg, kind = self.__judge(site, html2, status2, err2, source="回读",
+                                                save_debug=(idx == 1))
+                if state or _norm_cause(kind) != CAUSE_NO_EVIDENCE:
+                    break
         if state:
             return state, msg, kind
         if kind == KIND_LOGIN and cached:
