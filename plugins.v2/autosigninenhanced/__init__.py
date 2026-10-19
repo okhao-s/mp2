@@ -166,7 +166,7 @@ class AutoSignInEnhanced(_PluginBase):
     # 插件图标
     plugin_icon = "signin.png"
     # 插件版本
-    plugin_version = "2.9.1-Enhanced-v0.13"
+    plugin_version = "2.9.1-Enhanced-v0.14"
     # 插件作者
     plugin_author = "thsrite,cancelpt"
     # 作者主页
@@ -335,6 +335,12 @@ class AutoSignInEnhanced(_PluginBase):
             "methods": ["GET"],
             "summary": "重试失败站点",
             "description": "重新签到今天失败的站点（登录失效/盾未过/网络超时等）",
+        }, {
+            "path": "/reset_today",
+            "endpoint": self.reset_today,
+            "methods": ["GET"],
+            "summary": "清除今日记录",
+            "description": "清空今天的签到记录，下一次签到会对所有站点重新执行（用于修正误报成功）",
         }]
 
     def get_service(self) -> List[Dict[str, Any]]:
@@ -1371,6 +1377,24 @@ class AutoSignInEnhanced(_PluginBase):
                                         }
                                     },
                                     {
+                                        'component': 'VBtn',
+                                        'props': {
+                                            'color': 'error',
+                                            'size': 'small',
+                                            'variant': 'tonal',
+                                            'class': 'ml-2',
+                                            'prepend-icon': 'mdi-delete-sweep'
+                                        },
+                                        'text': '清除今日记录',
+                                        'events': {
+                                            'click': {
+                                                'api': f'plugin/AutoSignInEnhanced/reset_today?apikey={settings.API_TOKEN}',
+                                                'method': 'get',
+                                                'params': {}
+                                            }
+                                        }
+                                    },
+                                    {
                                         'component': 'VChip',
                                         'props': {
                                             'color': 'light-blue-lighten-5',
@@ -2108,6 +2132,20 @@ class AutoSignInEnhanced(_PluginBase):
             return "成功"
         return msg[:20]
 
+    def reset_today(self) -> schemas.Response:
+        """清空今天的签到记录，让下一次签到重新处理所有站点。
+
+        用途：某个站点被误判成「成功」时（例如把提示文案当成回执），
+        当天不会再被签到，只能靠这个接口把记录清掉重来。
+        """
+        today = datetime.now()
+        key = f"{today.month}月{today.day}日"
+        records = self.get_data(key) or []
+        count = len(records) if isinstance(records, list) else 1
+        self.save_data(key, [])
+        logger.info(f"已清除 {key} 的 {count} 条签到记录")
+        return schemas.Response(success=True, message=f"已清除今天的 {count} 条记录，可重新签到")
+
     def retry_failed(self) -> schemas.Response:
         """
         重试今天失败的站点（数据页「重试失败站点」按钮调用）
@@ -2502,7 +2540,8 @@ class AutoSignInEnhanced(_PluginBase):
                         cookies=site_cookie,
                         ua=ua,
                         headless=headless,
-                        timeout=max(45, int(timeout or 30)),
+                        # networkidle 等待较久，给足 90s，否则带盾/带统计脚本的页会直接超时
+                        timeout=max(90, int(timeout or 30)),
                     )
                 except Exception as e:
                     logger.warning(f"{site} 浏览器签到异常（headless={headless}）：{e}")

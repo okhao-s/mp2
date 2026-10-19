@@ -34,7 +34,8 @@ class Audiences(_ISiteSigninHandler):
         cookie = site_info.get("cookie")
         ua = site_info.get("ua")
         url = "https://audiences.me/attendance.php"
-        timeout = int(site_info.get("timeout") or 45)
+        # MoviePilot 的 action() 会等 networkidle，15s 默认超时对带 Turnstile 的页太短
+        timeout = max(90, int(site_info.get("timeout") or 0))
 
         html = None
         for headless in (False, True):
@@ -72,6 +73,11 @@ class Audiences(_ISiteSigninHandler):
     @staticmethod
     def _submit_turnstile(page) -> str:
         """等 Turnstile token 出现 → 提交表单 → 返回最终页面 HTML。"""
+        # action() 已经导航过一次；这里再显式进签到页，避免停在首页
+        try:
+            page.goto("https://audiences.me/attendance.php")
+        except Exception:
+            pass
         time.sleep(2)
         try:
             html = page.content()
