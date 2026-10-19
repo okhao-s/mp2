@@ -166,7 +166,7 @@ class AutoSignInEnhanced(_PluginBase):
     # 插件图标
     plugin_icon = "signin.png"
     # 插件版本
-    plugin_version = "2.9.1-Enhanced-v0.16"
+    plugin_version = "2.9.1-Enhanced-v0.17"
     # 插件作者
     plugin_author = "thsrite,cancelpt"
     # 作者主页
@@ -1854,24 +1854,7 @@ class AutoSignInEnhanced(_PluginBase):
                             {
                                 'component': 'VSpacer'
                             },
-                            *([{
-                                'component': 'VBtn',
-                                'props': {
-                                    'color': 'primary',
-                                    'size': 'x-small',
-                                    'variant': 'tonal',
-                                    'class': 'mr-2',
-                                    'prepend-icon': 'mdi-refresh'
-                                },
-                                'text': '重试',
-                                'events': {
-                                    'click': {
-                                        'api': f'plugin/AutoSignInEnhanced/retry_site?apikey={settings.API_TOKEN}&site={quote(str(site_name))}',
-                                        'method': 'get',
-                                        'params': {}
-                                    }
-                                }
-                            }] if show_retry else []),
+
                             {
                                 'component': 'VIcon',
                                 'props': {
@@ -1894,6 +1877,37 @@ class AutoSignInEnhanced(_PluginBase):
                 {
                     'component': 'VExpansionPanelText',
                     'content': [
+                        {
+                            'component': 'div',
+                            'props': {
+                                'class': 'd-flex align-center px-3 pt-2'
+                            },
+                            'content': [
+                                {
+                                    'component': 'span',
+                                    'props': {'class': 'text-caption text-medium-emphasis'},
+                                    'text': f'最近状态：{latest_status}'
+                                },
+                                {'component': 'VSpacer'},
+                                *([{
+                                    'component': 'VBtn',
+                                    'props': {
+                                        'color': 'primary',
+                                        'size': 'x-small',
+                                        'variant': 'tonal',
+                                        'prepend-icon': 'mdi-refresh'
+                                    },
+                                    'text': '重试该站',
+                                    'events': {
+                                        'click': {
+                                            'api': f'plugin/AutoSignInEnhanced/retry_site?apikey={settings.API_TOKEN}&site={quote(str(site_name))}',
+                                            'method': 'get',
+                                            'params': {}
+                                        }
+                                    }
+                                }] if show_retry else [])
+                            ]
+                        },
                         {
                             'component': 'VList',
                             'props': {
@@ -2161,11 +2175,21 @@ class AutoSignInEnhanced(_PluginBase):
     def retry_site(self, site: str = "") -> schemas.Response:
         """单独重试一个站点（记录页每个站点后面的按钮调用）。"""
         name = str(site or "").strip()
+        logger.info(f"收到单站重试请求：{name}")
         if not name:
             return schemas.Response(success=False, message="站点名不能为空")
         all_sites = [s for s in SitesHelper().get_indexers() if not s.get("public")] + self.__custom_sites()
         target = next((s for s in all_sites if str(s.get("name")) == name), None)
         if not target:
+            # 名字可能有空白/全半角差异，退化为模糊匹配
+            target = next((s for s in all_sites if str(s.get("name") or "").strip() == name), None)
+        if not target:
+            target = next((s for s in all_sites
+                           if name and (name in str(s.get("name") or "")
+                                        or str(s.get("name") or "") in name)), None)
+        if not target:
+            names = "、".join(str(s.get("name")) for s in all_sites[:30])
+            logger.warning(f"单站重试：找不到站点 {name}，可选站点：{names}")
             return schemas.Response(success=False, message=f"找不到站点配置：{name}")
         threading.Thread(target=self.__run_single_retry, args=(name, target), daemon=True).start()
         return schemas.Response(success=True, message=f"已开始重试「{name}」，完成后会发通知，稍后刷新查看")
@@ -2465,7 +2489,8 @@ class AutoSignInEnhanced(_PluginBase):
         return None
 
     def __judge(self, site: str, html: Optional[str], status: Optional[int], err: Optional[str],
-                source: str = "", save_debug: bool = True) -> Tuple[bool, str, str]:
+                source: str = "", save_debug: bool = True,
+                base_url: str = "") -> Tuple[bool, str, str]:
         """根据响应判断结果，返回 (是否成功, 消息, 原因码)。
 
         原则：没有页面证据就不算成功；结果不明归为「待核验」，不叫「站点改版」。
@@ -2484,6 +2509,13 @@ class AutoSignInEnhanced(_PluginBase):
             return False, contract_message(CAUSE_LOGIN_REQUIRED, "Cookie 已失效"), KIND_LOGIN
         sign_result, sign_msg = check_attendance(html or "")
         if sign_result:
+            # 文本命中不代表真签了：页面还挂着可用的签到入口，说明这是说明文案
+            if base_url and not any(k in sign_msg for k in ("已签到", "签到已得", "今天已经")):
+                act = self.__find_signin_action(html, base_url)
+                if act:
+                    logger.warning(f"{site} 页面仍存在签到入口（{act}），判定为未签到，转浏览器流程")
+                    return (False, contract_message(CAUSE_NO_EVIDENCE, "页面仍有签到入口"),
+                            CAUSE_NO_EVIDENCE)
             logger.info(f"{site} 签到回执：{sign_msg}（{source}）")
             return True, sign_msg, KIND_OK
         # 无回执：保存页面片段便于核验，但绝不当成成功
@@ -2534,14 +2566,7 @@ class AutoSignInEnhanced(_PluginBase):
         if not html and site_url != checkin_url:
             logger.info(f"{site} 签到页无响应，改访问首页：{site_url}")
             html, status, err = self.__http_get(site_url, cookie, req_ua, proxies, timeout)
-        state, msg, kind = self.__judge(site, html, status, err, source="直连")
-        if state:
-            # 页面里还挂着可用的签到入口，说明「签到成功」只是说明文案（我堡就是这样），
-            # 真正的签到动作还没做，必须转浏览器点一次
-            act = self.__find_signin_action(html, checkin_url)
-            if act and not any(k in (msg or "") for k in ("已签到", "签到已得", "今天已经")):
-                logger.warning(f"{site} 页面仍存在签到入口（{act}），判定为未签到，转浏览器流程")
-                state, msg, kind = False, contract_message(CAUSE_NO_EVIDENCE, "页面仍有签到入口"), CAUSE_NO_EVIDENCE
+        state, msg, kind = self.__judge(site, html, status, err, source="直连", base_url=checkin_url)
         if not state and _norm_cause(kind) == CAUSE_NO_EVIDENCE:
             # 页面只给了表单/链接时，先访问真正的签到动作地址（NexusPHP: ?action=signin）
             action_url = self.__find_signin_action(html, checkin_url)
@@ -2549,7 +2574,7 @@ class AutoSignInEnhanced(_PluginBase):
                 logger.info(f"{site} 页面存在签到动作，访问：{action_url}")
                 html_a, status_a, err_a = self.__http_get(action_url, cookie, req_ua, proxies, timeout)
                 if html_a:
-                    state, msg, kind = self.__judge(site, html_a, status_a, err_a, source="签到动作")
+                    state, msg, kind = self.__judge(site, html_a, status_a, err_a, source="签到动作", base_url=checkin_url)
         if not state and _norm_cause(kind) == CAUSE_NO_EVIDENCE:
             # 站点状态常是异步刷新的：再回读两次，避免把「刚签完还没刷新」记成待核验
             # （对应参考项目 waitForAuthoritativeCheckin 的权威回读）
@@ -2559,7 +2584,7 @@ class AutoSignInEnhanced(_PluginBase):
                 if not html2:
                     continue
                 state, msg, kind = self.__judge(site, html2, status2, err2, source="回读",
-                                                save_debug=(idx == 1))
+                                                save_debug=(idx == 1), base_url=checkin_url)
                 if state or _norm_cause(kind) != CAUSE_NO_EVIDENCE:
                     break
         if state:
@@ -2590,7 +2615,7 @@ class AutoSignInEnhanced(_PluginBase):
                     store.set(domain, clearance, solved.get("user_agent") or "")
                     logger.info(f"{site} 已缓存 cf_clearance（TTL {self._clearance_ttl}s）")
                 state, msg, kind = self.__judge(site, solved.get("html"), solved.get("status") or 200,
-                                                None, source="FlareSolverr")
+                                                None, source="FlareSolverr", base_url=checkin_url)
                 if state:
                     return state, msg, kind
                 if kind == KIND_NETWORK:
