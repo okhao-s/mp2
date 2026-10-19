@@ -205,11 +205,18 @@ def run(page, url: str) -> Dict[str, Any]:
     if state["status"] in ("signed", "already_signed"):
         return {**state, "evidence": _evidence(snap.get("bodyText", "")), "clicked": False}
 
-    # 人机验证/托管盾：等它自己过（Turnstile 在真浏览器里通常几秒内自动通过）
+    # 人机验证/托管盾：等它自己过。
+    # 我堡/观众这类站是「Turnstile 通过后由站点自己的回调提交表单」，
+    # 所以这里不能点按钮，只能等页面自己跳成结果页。
     if state["status"] in ("interactive_challenge", "managed_challenge"):
-        state = _wait_for_status(page, url, ("signed", "already_signed", "ready"), 25)
+        state = _wait_for_status(page, url, ("signed", "already_signed"), 45)
         if state["status"] in ("signed", "already_signed"):
             return {**state, "evidence": _evidence(_snapshot(page).get("bodyText", "")), "clicked": False}
+        body_now = _snapshot(page).get("bodyText", "")
+        if "等待签到验证" in body_now or "验证程序加载" in body_now:
+            return {"status": "challenge_pending", "cause": "managed_challenge",
+                    "reason": "Turnstile 验证程序未加载完成（检查浏览器能否访问 challenges.cloudflare.com）",
+                    "evidence": _evidence(body_now), "clicked": False}
 
     if state["status"] == "login_required":
         return {**state, "evidence": state["reason"], "clicked": False}

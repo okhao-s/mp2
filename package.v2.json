@@ -15,11 +15,12 @@
         "name": "站点自动签到增强",
         "description": "自动模拟登录、签到站点（CF 三层降级 + 失败分类重试）。",
         "labels": "站点",
-        "version": "2.9.1-Enhanced-v0.17",
+        "version": "2.9.1-Enhanced-v0.18",
         "icon": "signin.png",
         "author": "thsrite,cancelpt",
         "level": 2,
         "history": {
+            "v0.18": "我堡/观众真因：两站都是 Cloudflare Turnstile 站点（我堡 form#attendance 由 TurnstileCallback 自动提交，观众 #cf-token 由 cfCallback 提交），纯 HTTP 永远签不上；之前判成功是因为匹配到了页面的「签到奖励规则」文案（首次签到获得 10/20 粒）。已加规则文案黑名单、删掉会误报的观众适配器，改为通用浏览器流程：检测到 Turnstile 后等站点自己提交并回读结果；验证程序加载不出来会明确报原因",
             "v0.17": "修复单站重试按钮点击无效：按钮原先放在折叠面板标题里，Vuetify 的标题本身是 <button>（再嵌 VBtn 是非法嵌套）且上面盖着一层 overlay，点击被吃掉 —— 移到面板内容顶部「最近状态：xx  [重试该站]」；另外把「页面仍挂着签到入口 = 未签到」的判定收进 __judge，回读/FlareSolverr 也不会再绕过它误报成功",
             "v0.16": "签到记录页每个站点后面新增「重试」按钮：单独重签该站（后台执行，完成后推送通知），不用再整批重试；登录记录面板不显示该按钮",
             "v0.15": "我堡误报根因：页面静态写死「签到成功，获得 10 个魔力值」，同时又挂着签到入口 —— 现在只要页面还有可用的签到入口（action=signin/签到链接），一律不认文本回执，跟进去真正执行签到；观众浏览器超时根因：MoviePilot 的 action() 死等 networkidle，Turnstile 页永远等不到 —— 改为先用 robots.txt 把浏览器开起来，再自己 goto 签到页（domcontentloaded）",

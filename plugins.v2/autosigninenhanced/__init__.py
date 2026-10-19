@@ -116,7 +116,10 @@ _ATTENDANCE_PATTERNS = (
 )
 
 # 提示类上下文：出现在这些词后面的「获得」是站点在说明奖励，不是签到回执
-_HINT_CONTEXT = re.compile(r"(可获得|将获得|能获得|会获得|可得到|可领取|可获得奖励|签到奖励)")
+_HINT_CONTEXT = re.compile(
+    r"(可获得|将获得|能获得|会获得|可得到|可领取|可获得奖励|签到奖励"
+    r"|首次签到|每次签到|可额外获得|额外获得|封顶|天后"
+    r"|奖励规则|签到规则|等待签到验证|验证程序加载)")
 
 # 已签到类文案（无需再签）
 _ALREADY_PATTERNS = (
@@ -143,7 +146,7 @@ def check_attendance(html_str) -> Tuple[bool, str]:
         m = re.search(pattern, text)
         if m:
             # 提示文案（签到可获得 / 将获得 / 能获得 …）不是回执，跳过
-            around = text[max(0, m.start() - 12):m.end() + 8]
+            around = text[max(0, m.start() - 24):m.end() + 8]
             if _HINT_CONTEXT.search(around):
                 continue
             msg = fmt(m)
@@ -166,7 +169,7 @@ class AutoSignInEnhanced(_PluginBase):
     # 插件图标
     plugin_icon = "signin.png"
     # 插件版本
-    plugin_version = "2.9.1-Enhanced-v0.17"
+    plugin_version = "2.9.1-Enhanced-v0.18"
     # 插件作者
     plugin_author = "thsrite,cancelpt"
     # 作者主页
@@ -2657,8 +2660,9 @@ class AutoSignInEnhanced(_PluginBase):
                     return True, (evidence or "已签到"), KIND_OK
                 if status == "login_required":
                     return False, contract_message(CAUSE_LOGIN_REQUIRED, "Cookie 已失效"), KIND_LOGIN
-                if status in ("interactive_challenge", "managed_challenge"):
-                    return False, contract_message(CAUSE_MANAGED_CHALLENGE), KIND_SHIELD
+                if status in ("interactive_challenge", "managed_challenge", "challenge_pending"):
+                    detail = str(result.get("reason") or "")
+                    return False, contract_message(CAUSE_MANAGED_CHALLENGE, detail), KIND_SHIELD
                 if status == "needs_attention":
                     return False, contract_message(CAUSE_TWO_FACTOR), CAUSE_TWO_FACTOR
                 cause = result.get("cause") or ""

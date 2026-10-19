@@ -93,6 +93,20 @@ def main():
     out = B.run(page, "https://audiences.me/attendance.php")
     check("人机验证后出回执", out["status"] in ("signed", "already_signed"), out["status"])
 
+    # 6b) 站点自带 Turnstile：页面先显示「等待验证程序」，通过后站点自己提交表单
+    page = FakePage([
+        {"body": "签到 请耐心等待签到验证程序加载..... 首次签到获得 10 个魔力值。", "challenge": True},
+        {"body": "今日已签到，连续签到 3 天"},
+    ], advance_on_snapshot=True)
+    out = B.run(page, "https://ourbits.club/attendance.php")
+    check("Turnstile 自动提交后判已签到", out["status"] in ("signed", "already_signed"), out["status"])
+    check("自动提交不需要点击", out.get("clicked") is False, str(out.get("clicked")))
+
+    # 6c) Turnstile 一直加载不出来 → 明确报「验证程序未加载」
+    page = FakePage([{"body": "签到 请耐心等待签到验证程序加载.....", "challenge": True}])
+    out = B.run(page, "https://ourbits.club/attendance.php")
+    check("验证程序未加载给出明确原因", out["status"] == "challenge_pending", out["status"])
+
     # 7) 登录失效
     page = FakePage([{"body": "请先登录", "password": True}])
     out = B.run(page, "https://x/attendance.php")
