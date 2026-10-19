@@ -213,7 +213,7 @@ def main():
     p = make_plugin()
     hits_before = len(STATE["hits"])
     name, msg = p.signin_site(site_info())
-    check("场景3 判定登录失效", "登录失效" in msg, msg)
+    check("场景3 判定需要登录", "需要重新登录" in msg or "Cookie 已失效" in msg, msg)
     check("场景3 登录类失败不重试", len(STATE["hits"]) - hits_before == 1,
           f"请求 {len(STATE['hits']) - hits_before} 次")
     check("场景3 不调用 FlareSolverr", FLARE["calls"] == 0, f"calls={FLARE['calls']}")
@@ -225,7 +225,7 @@ def main():
     t0 = time.time()
     name, msg = p.signin_site(bad)
     elapsed = time.time() - t0
-    check("场景4 判定网络失败", "网络超时" in msg, msg)
+    check("场景4 判定网络不可达", "页面访问失败" in msg or "网络" in msg, msg)
     check("场景4 有退避重试", elapsed >= 5 + 10, f"耗时 {elapsed:.1f}s（5s+10s 退避）")
 
     # ---------- 场景 5：FlareSolverr 不可用 → 仿真兜底 ----------
@@ -266,8 +266,8 @@ def main():
     for f in os.listdir(debug_dir) if os.path.isdir(debug_dir) else []:
         os.remove(os.path.join(debug_dir, f))
     name, msg = p.signin_site(site_info())
-    check("场景7 判定站点改版", "站点改版" in msg, msg[:60])
-    check("场景7 消息带页面文本片段", "页面文本" in msg, msg[:80])
+    check("场景7 判定结果待核验", "签到证据" in msg, msg[:60])
+    check("场景7 消息带页面文本片段", "欢迎回来" in msg, msg[:80])
     saved = os.listdir(debug_dir) if os.path.isdir(debug_dir) else []
     check("场景7 原始页面已落盘", len(saved) == 1, f"{saved}")
 

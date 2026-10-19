@@ -31,6 +31,24 @@ from apscheduler.triggers.cron import CronTrigger
 from ruamel.yaml import CommentedMap
 from bs4 import BeautifulSoup
 
+from .checkin_contract import (
+    CAUSE_LOGIN_REQUIRED,
+    CAUSE_MANAGED_CHALLENGE,
+    CAUSE_NETWORK,
+    CAUSE_NO_EVIDENCE,
+    CAUSE_RATE_LIMIT,
+    CAUSE_SERVER_ERROR,
+    STATUS_ALREADY,
+    STATUS_SIGNED,
+    STATUS_UNKNOWN,
+    Ledger,
+    Receipt,
+    is_retryable,
+    label as contract_label,
+    message as contract_message,
+    redact,
+    status_for_cause,
+)
 from .cf_helper import (
     KIND_LABEL,
     KIND_LAYOUT,
@@ -57,6 +75,21 @@ def _int_or(value, default: int) -> int:
         return int(value)
     except (TypeError, ValueError):
         return default
+
+
+# 旧分类（cf_helper 的 KIND_*）→ 契约原因码
+_LEGACY_CAUSE = {
+    KIND_OK: "",
+    KIND_NETWORK: CAUSE_NETWORK,
+    KIND_SHIELD: CAUSE_MANAGED_CHALLENGE,
+    KIND_LOGIN: CAUSE_LOGIN_REQUIRED,
+    KIND_LAYOUT: CAUSE_NO_EVIDENCE,
+}
+
+
+def _norm_cause(cause: str) -> str:
+    """把适配器/旧逻辑返回的分类统一成契约原因码。"""
+    return _LEGACY_CAUSE.get(cause, cause or "")
 
 
 def _page_text(html_str: str) -> str:
@@ -120,7 +153,7 @@ class AutoSignInEnhanced(_PluginBase):
     # 插件图标
     plugin_icon = "signin.png"
     # 插件版本
-    plugin_version = "2.9.1-Enhanced-v0.3"
+    plugin_version = "2.9.1-Enhanced-v0.9"
     # 插件作者
     plugin_author = "thsrite,cancelpt"
     # 作者主页
@@ -2034,10 +2067,16 @@ class AutoSignInEnhanced(_PluginBase):
 
     @staticmethod
     def _record_status(msg: str) -> str:
-        """把签到返回文案归类成记录里的 status（与 __do 的归类保持一致）"""
+        """把签到返回文案归类成记录里的 status（与契约状态保持一致）"""
         msg = str(msg or "")
-        if "Cookie" in msg:
+        if "待核验" in msg or "无可确认" in msg:
+            return "结果待核验"
+        if "Cookie" in msg or "需登录" in msg or ("登录" in msg and "登录成功" not in msg):
             return "Cookie已失效"
+        if "安全验证" in msg or "需关注" in msg:
+            return "需关注"
+        if "不可访问" in msg or "超时" in msg or "连接" in msg:
+            return "不可访问"
         if "失败" in msg or "错误" in msg:
             return "失败"
         if "已签到" in msg:
@@ -2145,35 +2184,38 @@ class AutoSignInEnhanced(_PluginBase):
         return FlareSolverr(self._flare_url, self._flare_timeout)
 
     def _signin_once(self, site_info: CommentedMap) -> Tuple[bool, str, str]:
-        """执行一次签到（适配器优先，否则走通用流程）"""
+        """执行一次签到（适配器优先，否则走通用流程），返回 (成功, 消息, 原因码)"""
         site_module = self.__build_class(site_info.get("url"))
         if site_module and hasattr(site_module, "signin"):
             try:
                 state, message = site_module().signin(site_info)
             except Exception as e:
                 traceback.print_exc()
-                return False, fmt_failure(KIND_NETWORK, str(e)), KIND_NETWORK
-            return state, message, (KIND_OK if state else classify_message(message))
-        return self.__signin_base(site_info)
+                return False, contract_message(CAUSE_NETWORK, str(e)), CAUSE_NETWORK
+            return state, message, (KIND_OK if state else _norm_cause(classify_message(message)))
+        state, message, cause = self.__signin_base(site_info)
+        return state, message, _norm_cause(cause)
 
     def signin_site(self, site_info: CommentedMap) -> Tuple[str, str]:
         """
-        签到一个站点：每站随机抖动 + 失败分类 + 仅对网络/盾类失败自动重试
+        签到一个站点：每站随机抖动 + 失败分类 + 只对可重试原因自动重试（结果不明绝不重放）
         """
         site_name = site_info.get("name")
         if self._jitter:
             time.sleep(random.uniform(0, float(self._jitter)))
         attempts = max(1, int(self._retry_times or 0) + 1)
         start_time = datetime.now()
-        state, message, kind = False, "", KIND_LAYOUT
+        state, message, cause = False, "", CAUSE_NO_EVIDENCE
+        used = 1
         for i in range(attempts):
-            state, message, kind = self._signin_once(site_info)
-            if state or kind not in RETRYABLE:
+            used = i + 1
+            state, message, cause = self._signin_once(site_info)
+            if state or not is_retryable(cause):
                 break
             if i + 1 < attempts:
                 backoff = min(30, 5 * (2 ** i)) + random.uniform(0, 3)
-                logger.warning(f"{site_name} {KIND_LABEL.get(kind, kind)}，{backoff:.0f}s 后重试"
-                               f"（第 {i + 1}/{attempts - 1} 次）")
+                logger.warning(f"{site_name} {contract_label(status_for_cause(cause))}，"
+                               f"{backoff:.0f}s 后重试（第 {i + 1}/{attempts - 1} 次）")
                 time.sleep(backoff)
         seconds = (datetime.now() - start_time).seconds
         domain = StringUtils.get_url_domain(site_info.get('url'))
@@ -2181,7 +2223,25 @@ class AutoSignInEnhanced(_PluginBase):
             SiteOper().success(domain=domain, seconds=seconds)
         else:
             SiteOper().fail(domain)
-            logger.warning(f"{site_name} 签到失败（{KIND_LABEL.get(kind, kind)}，耗时 {seconds}s）：{message}")
+            logger.warning(f"{site_name} 签到未完成（{contract_label(status_for_cause(cause))}，"
+                           f"耗时 {seconds}s）：{message}")
+        # 回执账本：无论成败都留证据，便于事后核验
+        try:
+            status = STATUS_SIGNED if state else status_for_cause(cause)
+            if state and "已签到" in str(message):
+                status = STATUS_ALREADY
+            Ledger(str(self.get_data_path())).write(Receipt(
+                site=str(site_name or ""),
+                status=status,
+                cause="" if state else cause,
+                evidence=redact(message, 200),
+                url=str(site_info.get("url") or ""),
+                attempts=used,
+                duration_ms=seconds * 1000,
+                source="adapter" if self.__build_class(site_info.get("url")) else "base",
+            ))
+        except Exception:
+            logger.debug("写签到回执失败", exc_info=True)
         return site_name, message
 
     def _save_debug_html(self, site: str, html: str) -> str:
@@ -2220,24 +2280,32 @@ class AutoSignInEnhanced(_PluginBase):
 
     def __judge(self, site: str, html: Optional[str], status: Optional[int], err: Optional[str],
                 source: str = "") -> Tuple[bool, str, str]:
-        """根据响应判断结果，并归类失败原因"""
+        """根据响应判断结果，返回 (是否成功, 消息, 原因码)。
+
+        原则：没有页面证据就不算成功；结果不明归为「待核验」，不叫「站点改版」。
+        """
         kind = cf_classify(html, status, err)
         if kind == KIND_NETWORK:
-            return False, fmt_failure(KIND_NETWORK, err or "无法打开网站"), KIND_NETWORK
+            return False, contract_message(CAUSE_NETWORK, err or ""), KIND_NETWORK
         if kind == KIND_SHIELD:
-            return False, fmt_failure(KIND_SHIELD, "命中 Cloudflare 挑战页"), KIND_SHIELD
+            return False, contract_message(CAUSE_MANAGED_CHALLENGE), KIND_SHIELD
+        if status and 500 <= int(status) < 600:
+            return False, contract_message(CAUSE_SERVER_ERROR, f"HTTP {status}"), CAUSE_SERVER_ERROR
+        if status == 429:
+            return False, contract_message(CAUSE_RATE_LIMIT), CAUSE_RATE_LIMIT
         if kind == KIND_LOGIN or not SiteUtils.is_logged_in(html or ""):
-            return False, fmt_failure(KIND_LOGIN, "Cookie 已失效"), KIND_LOGIN
+            return False, contract_message(CAUSE_LOGIN_REQUIRED, "Cookie 已失效"), KIND_LOGIN
         sign_result, sign_msg = check_attendance(html or "")
         if sign_result:
-            logger.info(f"{site} 签到结果：{sign_msg}（{source}）")
+            logger.info(f"{site} 签到回执：{sign_msg}（{source}）")
             return True, sign_msg, KIND_OK
-        snippet = re.sub(r"\s+", " ", (sign_msg or "")).strip()[:200]
+        # 无回执：保存页面片段便于核验，但绝不当成成功
+        snippet = redact(sign_msg, 200)
         saved = self._save_debug_html(site, html)
-        logger.warning(f"{site} 已登录但未匹配到签到结果，页面文本片段：{snippet}")
+        logger.warning(f"{site} 未取得今日签到证据（页面文本：{snippet}）")
         if saved:
             logger.warning(f"{site} 原始页面已保存：{saved}")
-        return False, fmt_failure(KIND_LAYOUT, f"未匹配到签到结果，页面文本：{snippet}"), KIND_LAYOUT
+        return False, contract_message(CAUSE_NO_EVIDENCE, snippet), CAUSE_NO_EVIDENCE
 
     def __signin_base(self, site_info: CommentedMap) -> Tuple[bool, str, str]:
         """
