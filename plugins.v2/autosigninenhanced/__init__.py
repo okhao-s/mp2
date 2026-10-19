@@ -169,7 +169,7 @@ class AutoSignInEnhanced(_PluginBase):
     # 插件图标
     plugin_icon = "signin.png"
     # 插件版本
-    plugin_version = "2.9.1-Enhanced-v0.18"
+    plugin_version = "2.9.1-Enhanced-v0.19"
     # 插件作者
     plugin_author = "thsrite,cancelpt"
     # 作者主页
@@ -2631,6 +2631,17 @@ class AutoSignInEnhanced(_PluginBase):
         # 找到签到按钮点下去，再等页面出现回执。对只显示表单/提示文案的站点有效。
         if render or self._browser_fallback:
             logger.warning(f"{site} 进入浏览器签到流程（找按钮/等人机验证/回读）...")
+            safe_site = re.sub(r"[^\w.-]", "_", str(site or "site"))
+            shot_path = os.path.join(str(self.get_data_path()), "debug", f"{safe_site}-browser.png")
+            # 容器内能不能访问 CF 的 Turnstile 脚本，直接探一次
+            cf_url = "https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit"
+            for tag, px in (("直连", None), ("走代理", settings.PROXY_SERVER or None)):
+                try:
+                    probe = RequestUtils(timeout=10, proxies=px).get_res(cf_url)
+                    logger.info(f"{site} 容器访问 Turnstile 脚本（{tag}）："
+                                f"{getattr(probe, 'status_code', None) or '无响应'}")
+                except Exception as e:
+                    logger.warning(f"{site} 容器访问 Turnstile 脚本（{tag}）失败：{e}")
             result = None
             for headless in (False, True):
                 try:
@@ -2638,7 +2649,7 @@ class AutoSignInEnhanced(_PluginBase):
                     loader = re.sub(r"(https?://[^/]+).*", r"\1/robots.txt", checkin_url)
                     result = PlaywrightHelper().action(
                         url=loader,
-                        callback=lambda page: browser_run(page, checkin_url),
+                        callback=lambda page: browser_run(page, checkin_url, shot_path),
                         cookies=site_cookie,
                         ua=ua,
                         headless=headless,

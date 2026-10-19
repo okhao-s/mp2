@@ -178,7 +178,7 @@ def _wait_for_status(page, url, wanted, timeout_s: int) -> Dict[str, str]:
     return last
 
 
-def run(page, url: str) -> Dict[str, Any]:
+def run(page, url: str, shot_path: str = "") -> Dict[str, Any]:
     """在已打开的页面上跑完整签到流程，返回 {status, reason, evidence, clicked}。"""
     origin = ""
     m = re.match(r"https?://[^/]+", url or "")
@@ -214,6 +214,11 @@ def run(page, url: str) -> Dict[str, Any]:
             return {**state, "evidence": _evidence(_snapshot(page).get("bodyText", "")), "clicked": False}
         body_now = _snapshot(page).get("bodyText", "")
         if "等待签到验证" in body_now or "验证程序加载" in body_now:
+            if shot_path:
+                try:
+                    page.screenshot(path=shot_path, full_page=False)
+                except Exception:
+                    pass
             return {"status": "challenge_pending", "cause": "managed_challenge",
                     "reason": "Turnstile 验证程序未加载完成（检查浏览器能否访问 challenges.cloudflare.com）",
                     "evidence": _evidence(body_now), "clicked": False}
