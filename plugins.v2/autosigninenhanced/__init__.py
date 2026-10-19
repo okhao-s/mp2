@@ -169,7 +169,7 @@ class AutoSignInEnhanced(_PluginBase):
     # 插件图标
     plugin_icon = "signin.png"
     # 插件版本
-    plugin_version = "2.9.1-Enhanced-v0.19"
+    plugin_version = "2.9.1-Enhanced-v0.20"
     # 插件作者
     plugin_author = "thsrite,cancelpt"
     # 作者主页
@@ -2643,24 +2643,32 @@ class AutoSignInEnhanced(_PluginBase):
                 except Exception as e:
                     logger.warning(f"{site} 容器访问 Turnstile 脚本（{tag}）失败：{e}")
             result = None
-            for headless in (False, True):
+            # 入口用轻量页：action() 会死等 networkidle，直接开签到页会超时
+            loader = re.sub(r"(https?://[^/]+).*", r"\1/robots.txt", checkin_url)
+            # 先直连，再挂代理：有的站 Turnstile 脚本必须走代理才加载得出来
+            proxy_opts = [("直连", None)]
+            if settings.PROXY_SERVER:
+                proxy_opts.append(("代理", settings.PROXY_SERVER))
+            for tag, px in proxy_opts:
                 try:
-                    # 入口用轻量页：action() 会死等 networkidle，直接开签到页会超时
-                    loader = re.sub(r"(https?://[^/]+).*", r"\1/robots.txt", checkin_url)
                     result = PlaywrightHelper().action(
                         url=loader,
                         callback=lambda page: browser_run(page, checkin_url, shot_path),
                         cookies=site_cookie,
                         ua=ua,
-                        headless=headless,
+                        proxies={"http": px, "https": px} if px else None,
+                        headless=False,
                         # networkidle 等待较久，给足 90s，否则带盾/带统计脚本的页会直接超时
                         timeout=max(90, int(timeout or 30)),
                     )
                 except Exception as e:
-                    logger.warning(f"{site} 浏览器签到异常（headless={headless}）：{e}")
+                    logger.warning(f"{site} 浏览器签到异常（{tag}）：{e}")
                     result = None
-                if result:
+                if result and str(result.get("status")) != "challenge_pending":
+                    logger.info(f"{site} 浏览器签到（{tag}）完成判定")
                     break
+                if result:
+                    logger.warning(f"{site} 浏览器（{tag}）未能加载 Turnstile，换代理再试")
             if result:
                 status = str(result.get("status") or "")
                 evidence = str(result.get("evidence") or "")[:200]

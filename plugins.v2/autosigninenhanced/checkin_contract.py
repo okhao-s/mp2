@@ -83,7 +83,8 @@ RETRY_CAUSES = frozenset({
     CAUSE_RATE_LIMIT,
     CAUSE_NETWORK,
     CAUSE_SERVER_ERROR,
-    CAUSE_MANAGED_CHALLENGE,
+    # 注意：managed_challenge 不再自动重试。浏览器里过一次 Turnstile 要 45s，
+    # 过不了再重试 2 次只是白等 200s，结果不会变。
 })
 NEVER_REPLAY_CAUSES = frozenset({CAUSE_SUBMISSION_UNKNOWN})
 

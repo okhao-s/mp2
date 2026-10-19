@@ -25,12 +25,13 @@ class TestStatusTaxonomy(unittest.TestCase):
 class TestRetryPolicy(unittest.TestCase):
     def test_retryable(self):
         for c in (C.CAUSE_NETWORK, C.CAUSE_SERVER_ERROR, C.CAUSE_RATE_LIMIT,
-                  C.CAUSE_UPSTREAM_UNAVAILABLE, C.CAUSE_MANAGED_CHALLENGE):
+                  C.CAUSE_UPSTREAM_UNAVAILABLE):
             self.assertTrue(C.is_retryable(c), c)
 
     def test_not_retryable(self):
         for c in (C.CAUSE_LOGIN_REQUIRED, C.CAUSE_NO_EVIDENCE,
-                  C.CAUSE_SITE_MAINTENANCE, C.CAUSE_TWO_FACTOR):
+                  C.CAUSE_SITE_MAINTENANCE, C.CAUSE_TWO_FACTOR,
+                  C.CAUSE_MANAGED_CHALLENGE):
             self.assertFalse(C.is_retryable(c), c)
 
     def test_unknown_outcome_never_replayed(self):

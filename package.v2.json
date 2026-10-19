@@ -15,11 +15,12 @@
         "name": "站点自动签到增强",
         "description": "自动模拟登录、签到站点（CF 三层降级 + 失败分类重试）。",
         "labels": "站点",
-        "version": "2.9.1-Enhanced-v0.19",
+        "version": "2.9.1-Enhanced-v0.20",
         "icon": "signin.png",
         "author": "thsrite,cancelpt",
         "level": 2,
         "history": {
+            "v0.20": "我堡/观众：实测两站都必须过 Cloudflare Turnstile，纯 HTTP、FlareSolverr、无头浏览器都拿不到 token（连真 Chrome 里 widget 也只注入空 input，challenge iframe 不出现）。v0.20：浏览器流程先直连再挂代理重试一次；Turnstile 过不了不再自动重试（原来白等 200s），直接标记「需关注/需人工验证」",
             "v0.19": "我堡/观众：浏览器里 Turnstile 根本没渲染出来（页面停在「请耐心等待签到验证程序加载」，5 秒后提示把 challenges.cloudflare.com 加入代理）。v0.19 增加诊断：浏览器签到失败时存一张截图到 debug/<站点>-browser.png，并分别用直连/代理探测容器能否访问 Turnstile 脚本，日志会写明",
             "v0.18": "我堡/观众真因：两站都是 Cloudflare Turnstile 站点（我堡 form#attendance 由 TurnstileCallback 自动提交，观众 #cf-token 由 cfCallback 提交），纯 HTTP 永远签不上；之前判成功是因为匹配到了页面的「签到奖励规则」文案（首次签到获得 10/20 粒）。已加规则文案黑名单、删掉会误报的观众适配器，改为通用浏览器流程：检测到 Turnstile 后等站点自己提交并回读结果；验证程序加载不出来会明确报原因",
             "v0.17": "修复单站重试按钮点击无效：按钮原先放在折叠面板标题里，Vuetify 的标题本身是 <button>（再嵌 VBtn 是非法嵌套）且上面盖着一层 overlay，点击被吃掉 —— 移到面板内容顶部「最近状态：xx  [重试该站]」；另外把「页面仍挂着签到入口 = 未签到」的判定收进 __judge，回读/FlareSolverr 也不会再绕过它误报成功",
