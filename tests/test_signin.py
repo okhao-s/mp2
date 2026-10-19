@@ -64,6 +64,11 @@ class SiteHandler(BaseHTTPRequestHandler):
                 body, code = (NORESULT_PAGE if n <= 2 else OK_PAGE), 200
             elif mode == "down":
                 body, code = "服务暂时不可用", 503
+            elif mode == "action":
+                if "action=signin" in self.path:
+                    body, code = OK_PAGE, 200
+                else:
+                    body, code = ACTION_PAGE, 200
             elif mode == "login":
                 body, code = LOGIN_PAGE, 200
             elif mode == "ok":
@@ -83,6 +88,10 @@ class SiteHandler(BaseHTTPRequestHandler):
         finally:
             with STATE["lock"]:
                 STATE["in_flight"] -= 1
+
+
+ACTION_PAGE = """<html><body><div>今日还未签到，签到可获得 10 个魔力值</div>
+<a href="/attendance.php?action=signin">签到</a></body></html>"""
 
 
 # ---------------- 假 FlareSolverr ----------------
@@ -295,6 +304,15 @@ def main():
     check("场景9 首个站点正常尝试", "服务" not in outs[0][1] and "签到" in outs[0][1] or "503" in outs[0][1] or "故障" in outs[0][1], outs[0][1][:50])
     check("场景9 连续 2 次失败后熔断后续站点", "熔断" in outs[2][1],
           f"{outs[1][1][:30]} / {outs[2][1][:30]}")
+
+    # ---------- 场景 10：页面只有提示 + 签到链接 → 应自动访问动作地址 ----------
+    reset(mode="action")
+    p = make_plugin(_retry_times=0)
+    name, msg = p.signin_site(site_info())
+    check("场景10 提示文案不算成功", "可获得" not in msg or "签到已得" in msg, msg[:50])
+    check("场景10 跟随签到动作后成功", "签到已得" in msg, msg[:60])
+    check("场景10 访问了动作地址", any("action=signin" in h[1] for h in STATE["hits"]),
+          f"{[h[1] for h in STATE['hits']][:4]}")
 
     # ---------- 汇总 ----------
     ok = sum(1 for _, c, _ in results if c)

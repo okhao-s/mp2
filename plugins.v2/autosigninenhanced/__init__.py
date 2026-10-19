@@ -4,6 +4,7 @@ import re
 import threading
 import time
 import traceback
+import html as html_lib
 from datetime import datetime, timedelta
 from multiprocessing.dummy import Pool as ThreadPool
 from multiprocessing.pool import ThreadPool
@@ -105,9 +106,13 @@ _ATTENDANCE_PATTERNS = (
      lambda m: f"第 {m.group(1)} 次签到，连续 {m.group(2)} 天，获得 {m.group(3)} 魔力值"),
     (r"本次签到获得\s*(\d+)", lambda m: f"本次签到获得 {m.group(1)} 个魔力值"),
     (r"签到成功[，,、\s]*获得\s*(\d+)", lambda m: f"签到成功，获得 {m.group(1)} 个魔力值"),
-    (r"获得\s*(\d+)\s*个?魔力值", lambda m: f"获得 {m.group(1)} 个魔力值"),
+    (r"(?:签到|打卡)(?:成功)?[，,、\s]*获得\s*(\d+)\s*个?魔力值",
+     lambda m: f"签到成功，获得 {m.group(1)} 个魔力值"),
     (r"连续签到\s*(\d+)\s*天", lambda m: f"连续签到 {m.group(1)} 天"),
 )
+
+# 提示类上下文：出现在这些词后面的「获得」是站点在说明奖励，不是签到回执
+_HINT_CONTEXT = re.compile(r"(可获得|将获得|能获得|会获得|可得到|可领取|可获得奖励|签到奖励)")
 
 # 已签到类文案（无需再签）
 _ALREADY_PATTERNS = (
@@ -133,6 +138,10 @@ def check_attendance(html_str) -> Tuple[bool, str]:
     for pattern, fmt in _ATTENDANCE_PATTERNS:
         m = re.search(pattern, text)
         if m:
+            # 提示文案（签到可获得 / 将获得 / 能获得 …）不是回执，跳过
+            around = text[max(0, m.start() - 12):m.end() + 8]
+            if _HINT_CONTEXT.search(around):
+                continue
             msg = fmt(m)
             logger.info(f"签到结果匹配：{msg}")
             return True, msg
@@ -153,7 +162,7 @@ class AutoSignInEnhanced(_PluginBase):
     # 插件图标
     plugin_icon = "signin.png"
     # 插件版本
-    plugin_version = "2.9.1-Enhanced-v0.11"
+    plugin_version = "2.9.1-Enhanced-v0.12"
     # 插件作者
     plugin_author = "thsrite,cancelpt"
     # 作者主页
@@ -2326,6 +2335,25 @@ class AutoSignInEnhanced(_PluginBase):
             return None, None, "请求无响应"
         return res.text, res.status_code, None
 
+    @staticmethod
+    def __find_signin_action(html: Optional[str], base_url: str) -> Optional[str]:
+        """从签到页里找真正的签到动作链接。
+
+        NexusPHP 常见形式：`attendance.php?action=signin`，或一个文字为「签到」的链接。
+        有些站直接 GET 签到页只展示表单，必须再访问一次动作地址才真正签到。
+        """
+        if not html:
+            return None
+        for m in re.finditer(r'(?:href|action)\s*=\s*["\']([^"\']+)["\']', html, re.I):
+            href = m.group(1)
+            low = href.lower()
+            if "action=signin" in low or "action=sign" in low or "action=attendance" in low:
+                return urljoin(base_url, html_lib.unescape(href))
+        for m in re.finditer(r'<a[^>]+href=["\']([^"\']+)["\'][^>]*>([^<]{0,16})</a>', html, re.I):
+            if "签到" in m.group(2):
+                return urljoin(base_url, html_lib.unescape(m.group(1)))
+        return None
+
     def __judge(self, site: str, html: Optional[str], status: Optional[int], err: Optional[str],
                 source: str = "", save_debug: bool = True) -> Tuple[bool, str, str]:
         """根据响应判断结果，返回 (是否成功, 消息, 原因码)。
@@ -2397,6 +2425,14 @@ class AutoSignInEnhanced(_PluginBase):
             logger.info(f"{site} 签到页无响应，改访问首页：{site_url}")
             html, status, err = self.__http_get(site_url, cookie, req_ua, proxies, timeout)
         state, msg, kind = self.__judge(site, html, status, err, source="直连")
+        if not state and _norm_cause(kind) == CAUSE_NO_EVIDENCE:
+            # 页面只给了表单/链接时，先访问真正的签到动作地址（NexusPHP: ?action=signin）
+            action_url = self.__find_signin_action(html, checkin_url)
+            if action_url and action_url != checkin_url:
+                logger.info(f"{site} 页面存在签到动作，访问：{action_url}")
+                html_a, status_a, err_a = self.__http_get(action_url, cookie, req_ua, proxies, timeout)
+                if html_a:
+                    state, msg, kind = self.__judge(site, html_a, status_a, err_a, source="签到动作")
         if not state and _norm_cause(kind) == CAUSE_NO_EVIDENCE:
             # 站点状态常是异步刷新的：再回读两次，避免把「刚签完还没刷新」记成待核验
             # （对应参考项目 waitForAuthoritativeCheckin 的权威回读）
