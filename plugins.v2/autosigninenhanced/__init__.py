@@ -169,7 +169,7 @@ class AutoSignInEnhanced(_PluginBase):
     # 插件图标
     plugin_icon = "signin.png"
     # 插件版本
-    plugin_version = "2.9.1-Enhanced-v0.20"
+    plugin_version = "2.9.1-Enhanced-v0.21"
     # 插件作者
     plugin_author = "thsrite,cancelpt"
     # 作者主页
@@ -247,6 +247,12 @@ class AutoSignInEnhanced(_PluginBase):
             self._login_sites = [site_id for site_id in all_sites if site_id in self._login_sites]
             # 保存配置
             self.__update_config()
+
+        # 运行期状态：config 为空（首次加载/恢复备份）时也必须可用
+        self._browser_fallback = True
+        if getattr(self, "_breaker_lock", None) is None:
+            self._breaker_lock = threading.Lock()
+        self._upstream_fail = {}
 
         # 加载模块
         if self._enabled or self._onlyonce:
@@ -355,83 +361,85 @@ class AutoSignInEnhanced(_PluginBase):
     def get_service(self) -> List[Dict[str, Any]]:
         """
         注册插件公共服务
-        [{
-            "id": "服务ID",
-            "name": "服务名称",
-            "trigger": "触发器：cron/interval/date/CronTrigger.from_crontab()",
-            "func": self.xxx,
-            "kwargs": {} # 定时器参数
-        }]
+
+        注意 MoviePilot 的 job_id 取自 service id 的 ``|`` 前半段：
+        ``job_id = f"{pid}_{service['id']}".split("|")[0]``，注册新服务前会先
+        移除**同 job_id** 的旧任务。所以一次要注册多个任务时，``|`` 前面必须各不相同，
+        否则后一个会把前一个顶掉（留空 cron 的「随机两次」就只剩一次）。
         """
-        if self._enabled and self._cron:
-            try:
-                if str(self._cron).strip().count(" ") == 4:
+        # 每次注册都重置时间窗，避免上一次配置（N/9-23 形式）残留导致其它时间被拦
+        self._start_time = None
+        self._end_time = None
+
+        if not self._enabled:
+            return []
+
+        cron_str = str(self._cron or "").strip()
+        try:
+            # ① 标准 5 段 cron
+            if cron_str.count(" ") == 4:
+                try:
+                    trigger = CronTrigger.from_crontab(cron_str)
+                except Exception as err:
+                    logger.error(f"cron 表达式无效（{cron_str}）：{err}，改用默认随机时间")
+                    cron_str = ""
+                else:
                     return [{
                         "id": "AutoSignInEnhanced",
                         "name": "站点自动签到增强服务",
-                        "trigger": CronTrigger.from_crontab(self._cron),
+                        "trigger": trigger,
                         "func": self.sign_in,
-                        "kwargs": {}
+                        "kwargs": {},
                     }]
-                else:
-                    # 2.3/9-23
-                    crons = str(self._cron).strip().split("/")
-                    if len(crons) == 2:
-                        # 2.3
-                        cron = crons[0]
-                        # 9-23
-                        times = crons[1].split("-")
-                        if len(times) == 2:
-                            # 9
+
+            # ② 周期形式：0.5 或 2.3/9-23（每 N 小时，可限定小时段）
+            if cron_str:
+                crons = cron_str.split("/")
+                if len(crons) == 2:
+                    times = crons[1].split("-")
+                    if len(times) == 2:
+                        try:
                             self._start_time = int(times[0])
-                            # 23
                             self._end_time = int(times[1])
-                        if self._start_time and self._end_time:
-                            return [{
-                                "id": "AutoSignInEnhanced",
-                                "name": "站点自动签到增强服务",
-                                "trigger": "interval",
-                                "func": self.sign_in,
-                                "kwargs": {
-                                    "hours": float(str(cron).strip()),
-                                }
-                            }]
-                        else:
-                            logger.error("站点自动签到增强服务启动失败，周期格式错误")
-                    else:
-                        # 默认0-24 按照周期运行
-                        return [{
-                            "id": "AutoSignInEnhanced",
-                            "name": "站点自动签到增强服务",
-                            "trigger": "interval",
-                            "func": self.sign_in,
-                            "kwargs": {
-                                "hours": float(str(self._cron).strip()),
-                            }
-                        }]
-            except Exception as err:
-                logger.error(f"定时任务配置错误：{str(err)}")
-        elif self._enabled:
-            # 随机时间
+                        except ValueError:
+                            self._start_time = self._end_time = None
+                try:
+                    hours = float(str(crons[0]).strip())
+                except ValueError:
+                    logger.error(f"周期格式错误（{cron_str}），改用默认随机时间")
+                    hours = None
+                if hours and hours > 0:
+                    return [{
+                        "id": "AutoSignInEnhanced",
+                        "name": "站点自动签到增强服务",
+                        "trigger": "interval",
+                        "func": self.sign_in,
+                        "kwargs": {"hours": hours},
+                    }]
+
+            # ③ 未配置 / 配置无效：每天随机两次（09:00-23:00 之间）
             triggers = TimerUtils.random_scheduler(num_executions=2,
                                                    begin_hour=9,
                                                    end_hour=23,
                                                    max_interval=6 * 60,
                                                    min_interval=2 * 60)
             ret_jobs = []
-            for trigger in triggers:
+            for idx, trigger in enumerate(triggers, start=1):
                 ret_jobs.append({
-                    "id": f"AutoSignInEnhanced|{trigger.hour}:{trigger.minute}",
-                    "name": "站点自动签到增强服务",
+                    # 前缀必须唯一，否则两个任务共用 job_id 互相覆盖
+                    "id": f"AutoSignInEnhanced{idx}|{trigger.hour}:{trigger.minute}",
+                    "name": f"站点自动签到增强服务({trigger.hour:02d}:{trigger.minute:02d})",
                     "trigger": "cron",
                     "func": self.sign_in,
                     "kwargs": {
                         "hour": trigger.hour,
-                        "minute": trigger.minute
-                    }
+                        "minute": trigger.minute,
+                    },
                 })
             return ret_jobs
-        return []
+        except Exception as err:
+            logger.error(f"定时任务配置错误：{str(err)}")
+            return []
 
     def get_form(self) -> Tuple[List[dict], Dict[str, Any]]:
         """

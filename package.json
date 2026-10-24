@@ -1,62 +1,62 @@
 {
-    "TorrentTransferEnhanced": {
-        "name": "转移做种增强",
-        "description": "支持暂停和未完成的种子定时转移做种。",
-        "labels": "做种",
-        "version": "0.1",
-        "icon": "https://raw.githubusercontent.com/cancelpt/MoviePilot-Plugins/refs/heads/main/icons/fruit.png",
-        "author": "jxxghp,cancelpt",
-        "level": 2,
-        "history": {
-            "v0.1": "初始版本"
-        }
-    },
-    "AutoSignInEnhanced": {
-        "name": "站点自动签到增强",
-        "description": "自动模拟登录、签到站点（CF 三层降级 + 失败分类重试）。",
-        "labels": "站点",
-        "version": "2.9.1-Enhanced-v0.20",
-        "icon": "https://raw.githubusercontent.com/okhao-s/mp2/main/icons/fruit.png",
-        "author": "thsrite,cancelpt",
-        "level": 2,
-        "v2": true,
-        "history": {
-            "v0.20": "我堡/观众：实测两站都必须过 Cloudflare Turnstile，纯 HTTP、FlareSolverr、无头浏览器都拿不到 token（连真 Chrome 里 widget 也只注入空 input，challenge iframe 不出现）。v0.20：浏览器流程先直连再挂代理重试一次；Turnstile 过不了不再自动重试（原来白等 200s），直接标记「需关注/需人工验证」",
-            "v0.19": "我堡/观众：浏览器里 Turnstile 根本没渲染出来（页面停在「请耐心等待签到验证程序加载」，5 秒后提示把 challenges.cloudflare.com 加入代理）。v0.19 增加诊断：浏览器签到失败时存一张截图到 debug/<站点>-browser.png，并分别用直连/代理探测容器能否访问 Turnstile 脚本，日志会写明",
-            "v0.18": "我堡/观众真因：两站都是 Cloudflare Turnstile 站点（我堡 form#attendance 由 TurnstileCallback 自动提交，观众 #cf-token 由 cfCallback 提交），纯 HTTP 永远签不上；之前判成功是因为匹配到了页面的「签到奖励规则」文案（首次签到获得 10/20 粒）。已加规则文案黑名单、删掉会误报的观众适配器，改为通用浏览器流程：检测到 Turnstile 后等站点自己提交并回读结果；验证程序加载不出来会明确报原因",
-            "v0.17": "修复单站重试按钮点击无效：按钮原先放在折叠面板标题里，Vuetify 的标题本身是 <button>（再嵌 VBtn 是非法嵌套）且上面盖着一层 overlay，点击被吃掉 —— 移到面板内容顶部「最近状态：xx  [重试该站]」；另外把「页面仍挂着签到入口 = 未签到」的判定收进 __judge，回读/FlareSolverr 也不会再绕过它误报成功",
-            "v0.16": "签到记录页每个站点后面新增「重试」按钮：单独重签该站（后台执行，完成后推送通知），不用再整批重试；登录记录面板不显示该按钮",
-            "v0.15": "我堡误报根因：页面静态写死「签到成功，获得 10 个魔力值」，同时又挂着签到入口 —— 现在只要页面还有可用的签到入口（action=signin/签到链接），一律不认文本回执，跟进去真正执行签到；观众浏览器超时根因：MoviePilot 的 action() 死等 networkidle，Turnstile 页永远等不到 —— 改为先用 robots.txt 把浏览器开起来，再自己 goto 签到页（domcontentloaded）",
-            "v0.14": "修复观众浏览器超时：action() 等 networkidle 的 15s 默认超时对带 Turnstile 的页太短，改为至少 90s，并在回调里显式重新进入 attendance.php；新增「清除今日记录」按钮（reset_today），用于修正被误判成成功的站点（我堡这类当天不会再重签）",
-            "v0.13": "复刻 codex-checkin 的浏览器签到逻辑：新增 browser_checkin.py（页面分类 → 找签到按钮 → 点击 → 等人机验证/权威回读 → 出回执）。无回执时自动开真浏览器把签到按钮点下去，不再只读一次 HTML 就判失败；我堡这类「页面只显示提示文案」的站点会真正执行签到",
-            "v0.12": "修复「假成功」：我堡页面上的提示文案「签到可获得 10 个魔力值」被当成签到回执，导致面板显示成功但实际没签。现在提示类上下文（可获得/将获得/能获得）一律不算回执；「获得 N 魔力值」必须带签到/打卡上下文；页面只有提示+签到链接时自动跟随动作地址（NexusPHP ?action=signin）真正执行签到，仍无回执则记「结果待核验」",
-            "v0.11": "观众（audiences.me）专用适配器：attendance.php 挂 Cloudflare Turnstile，必须用真浏览器等 token 再提交表单；同时修复「浏览器仿真」在 BROWSER_EMULATION=flaresolverr 时其实只重复调用 FlareSolverr 的问题（改用 PlaywrightHelper.action 真开浏览器）；重试失败站点去重，避免同一站被并发重复签到",
-            "v0.10": "借鉴 codex-checkin：签到后权威回读（首读无文案时 4s/6s 再读两次，站点异步刷新不再误判待核验）；同域上游连续失败 2 次熔断本轮后续站点；CF 挑战标记补 Turnstile/challenge-platform；5xx/429 优先按状态码归类；debug 页面按内容哈希去重",
-            "v0.9": "签到状态契约（移植 codex-bookmark-checkin-template）：状态/原因码统一；没有页面证据一律记「结果待核验」，不再误报「站点改版」；只重试可重试原因，结果不明禁止重放；每日回执账本 ledger/*.jsonl（自动脱敏）",
-            "v0.8": "数据页新增「重试失败站点」按钮：一键重签今天失败的站点（≤3 个同步返回，更多走后台并发重试并推送结果）",
-            "2.9.1-Enhanced-v0.7": "修复 cf_clearance 与 UA 绑定：复用缓存时必须用解盾时的 UA 直连，否则盾会重新弹（我堡这类站解盾后仍被判失败的根因）",
-            "2.9.1-Enhanced-v0.6": "未匹配到签到结果时：消息带 200 字页面文本片段，并把原始页面存到插件数据目录 debug/（保留最近 5 个），便于定位站点文案",
-            "2.9.1-Enhanced-v0.5": "签到结果解析重写：兼容「签到已得 N」（含空格）、「签到成功，获得 N」、「今天已经签到过」、「打卡成功」等变体；未匹配时在日志和通知里带页面文本片段",
-            "2.9.1-Enhanced-v0.4": "CF 三层降级（直连→FlareSolverr→仿真）+ cf_clearance 按站缓存；并发限 2 + 每站随机抖动；失败分类与网络/盾类自动重试",
-            "v2.9.1-Enhanced-v0.3": "保留增强历史详情页，合并 2.9.1 站点名称解析与每日状态概要",
-            "v2.8.1-Enhanced-v0.2": "增强了签到、登录历史记录显示",
-            "v2.8.1-Enhanced-v0.1": "从AutoSignIn v2.8.1 源码修改而来"
-        }
-    },
-    "ResourceSiteCheckin": {
-        "name": "聚影签到",
-        "description": "聚影（jying.top）自动签到：普通/幸运签到、CF 盾兜底、token 自动续期。",
-        "labels": "签到",
-        "version": "1.3",
-        "icon": "https://raw.githubusercontent.com/okhao-s/mp2/main/icons/fruit.png",
-        "author": "okhao",
-        "level": 1,
-        "v2": true,
-        "history": {
-            "v1.3": "改名：资源站签到 → 聚影签到（插件 ID 不变，已安装的无需重装）",
-            "v1.2": "补齐 get_api/get_command：_PluginBase 是抽象基类，缺 get_api 会无法实例化（加载报 abstract class 错误）",
-            "v1.1": "数据页容错：读取失败不再抛异常（修复「插件数据加载失败」）",
-            "v1.0": "初始版本：登录拿 token、查询签到状态、普通签到、幸运签到、CF 盾 FlareSolverr 兜底"
-        }
+  "TorrentTransferEnhanced": {
+    "name": "转移做种增强",
+    "description": "支持暂停和未完成的种子定时转移做种。",
+    "labels": "做种",
+    "version": "0.1",
+    "icon": "https://raw.githubusercontent.com/cancelpt/MoviePilot-Plugins/refs/heads/main/icons/fruit.png",
+    "author": "jxxghp,cancelpt",
+    "level": 2,
+    "history": {
+      "v0.1": "初始版本"
     }
+  },
+  "AutoSignInEnhanced": {
+    "name": "站点自动签到增强",
+    "description": "自动模拟登录、签到站点（CF 三层降级 + 失败分类重试）。",
+    "labels": "站点",
+    "version": "2.9.1-Enhanced-v0.21",
+    "icon": "https://raw.githubusercontent.com/okhao-s/mp2/main/icons/fruit.png",
+    "author": "thsrite,cancelpt",
+    "level": 2,
+    "v2": true,
+    "history": {
+      "v0.20": "我堡/观众：实测两站都必须过 Cloudflare Turnstile，纯 HTTP、FlareSolverr、无头浏览器都拿不到 token（连真 Chrome 里 widget 也只注入空 input，challenge iframe 不出现）。v0.20：浏览器流程先直连再挂代理重试一次；Turnstile 过不了不再自动重试（原来白等 200s），直接标记「需关注/需人工验证」",
+      "v0.19": "我堡/观众：浏览器里 Turnstile 根本没渲染出来（页面停在「请耐心等待签到验证程序加载」，5 秒后提示把 challenges.cloudflare.com 加入代理）。v0.19 增加诊断：浏览器签到失败时存一张截图到 debug/<站点>-browser.png，并分别用直连/代理探测容器能否访问 Turnstile 脚本，日志会写明",
+      "v0.18": "我堡/观众真因：两站都是 Cloudflare Turnstile 站点（我堡 form#attendance 由 TurnstileCallback 自动提交，观众 #cf-token 由 cfCallback 提交），纯 HTTP 永远签不上；之前判成功是因为匹配到了页面的「签到奖励规则」文案（首次签到获得 10/20 粒）。已加规则文案黑名单、删掉会误报的观众适配器，改为通用浏览器流程：检测到 Turnstile 后等站点自己提交并回读结果；验证程序加载不出来会明确报原因",
+      "v0.17": "修复单站重试按钮点击无效：按钮原先放在折叠面板标题里，Vuetify 的标题本身是 <button>（再嵌 VBtn 是非法嵌套）且上面盖着一层 overlay，点击被吃掉 —— 移到面板内容顶部「最近状态：xx  [重试该站]」；另外把「页面仍挂着签到入口 = 未签到」的判定收进 __judge，回读/FlareSolverr 也不会再绕过它误报成功",
+      "v0.16": "签到记录页每个站点后面新增「重试」按钮：单独重签该站（后台执行，完成后推送通知），不用再整批重试；登录记录面板不显示该按钮",
+      "v0.15": "我堡误报根因：页面静态写死「签到成功，获得 10 个魔力值」，同时又挂着签到入口 —— 现在只要页面还有可用的签到入口（action=signin/签到链接），一律不认文本回执，跟进去真正执行签到；观众浏览器超时根因：MoviePilot 的 action() 死等 networkidle，Turnstile 页永远等不到 —— 改为先用 robots.txt 把浏览器开起来，再自己 goto 签到页（domcontentloaded）",
+      "v0.14": "修复观众浏览器超时：action() 等 networkidle 的 15s 默认超时对带 Turnstile 的页太短，改为至少 90s，并在回调里显式重新进入 attendance.php；新增「清除今日记录」按钮（reset_today），用于修正被误判成成功的站点（我堡这类当天不会再重签）",
+      "v0.13": "复刻 codex-checkin 的浏览器签到逻辑：新增 browser_checkin.py（页面分类 → 找签到按钮 → 点击 → 等人机验证/权威回读 → 出回执）。无回执时自动开真浏览器把签到按钮点下去，不再只读一次 HTML 就判失败；我堡这类「页面只显示提示文案」的站点会真正执行签到",
+      "v0.12": "修复「假成功」：我堡页面上的提示文案「签到可获得 10 个魔力值」被当成签到回执，导致面板显示成功但实际没签。现在提示类上下文（可获得/将获得/能获得）一律不算回执；「获得 N 魔力值」必须带签到/打卡上下文；页面只有提示+签到链接时自动跟随动作地址（NexusPHP ?action=signin）真正执行签到，仍无回执则记「结果待核验」",
+      "v0.11": "观众（audiences.me）专用适配器：attendance.php 挂 Cloudflare Turnstile，必须用真浏览器等 token 再提交表单；同时修复「浏览器仿真」在 BROWSER_EMULATION=flaresolverr 时其实只重复调用 FlareSolverr 的问题（改用 PlaywrightHelper.action 真开浏览器）；重试失败站点去重，避免同一站被并发重复签到",
+      "v0.10": "借鉴 codex-checkin：签到后权威回读（首读无文案时 4s/6s 再读两次，站点异步刷新不再误判待核验）；同域上游连续失败 2 次熔断本轮后续站点；CF 挑战标记补 Turnstile/challenge-platform；5xx/429 优先按状态码归类；debug 页面按内容哈希去重",
+      "v0.9": "签到状态契约（移植 codex-bookmark-checkin-template）：状态/原因码统一；没有页面证据一律记「结果待核验」，不再误报「站点改版」；只重试可重试原因，结果不明禁止重放；每日回执账本 ledger/*.jsonl（自动脱敏）",
+      "v0.8": "数据页新增「重试失败站点」按钮：一键重签今天失败的站点（≤3 个同步返回，更多走后台并发重试并推送结果）",
+      "2.9.1-Enhanced-v0.7": "修复 cf_clearance 与 UA 绑定：复用缓存时必须用解盾时的 UA 直连，否则盾会重新弹（我堡这类站解盾后仍被判失败的根因）",
+      "2.9.1-Enhanced-v0.6": "未匹配到签到结果时：消息带 200 字页面文本片段，并把原始页面存到插件数据目录 debug/（保留最近 5 个），便于定位站点文案",
+      "2.9.1-Enhanced-v0.5": "签到结果解析重写：兼容「签到已得 N」（含空格）、「签到成功，获得 N」、「今天已经签到过」、「打卡成功」等变体；未匹配时在日志和通知里带页面文本片段",
+      "2.9.1-Enhanced-v0.4": "CF 三层降级（直连→FlareSolverr→仿真）+ cf_clearance 按站缓存；并发限 2 + 每站随机抖动；失败分类与网络/盾类自动重试",
+      "v2.9.1-Enhanced-v0.3": "保留增强历史详情页，合并 2.9.1 站点名称解析与每日状态概要",
+      "v2.8.1-Enhanced-v0.2": "增强了签到、登录历史记录显示",
+      "v2.8.1-Enhanced-v0.1": "从AutoSignIn v2.8.1 源码修改而来"
+    }
+  },
+  "ResourceSiteCheckin": {
+    "name": "聚影签到",
+    "description": "聚影（jying.top）自动签到：普通/幸运签到、CF 盾兜底、token 自动续期。",
+    "labels": "签到",
+    "version": "1.3",
+    "icon": "https://raw.githubusercontent.com/okhao-s/mp2/main/icons/fruit.png",
+    "author": "okhao",
+    "level": 1,
+    "v2": true,
+    "history": {
+      "v1.3": "改名：资源站签到 → 聚影签到（插件 ID 不变，已安装的无需重装）",
+      "v1.2": "补齐 get_api/get_command：_PluginBase 是抽象基类，缺 get_api 会无法实例化（加载报 abstract class 错误）",
+      "v1.1": "数据页容错：读取失败不再抛异常（修复「插件数据加载失败」）",
+      "v1.0": "初始版本：登录拿 token、查询签到状态、普通签到、幸运签到、CF 盾 FlareSolverr 兜底"
+    }
+  }
 }
